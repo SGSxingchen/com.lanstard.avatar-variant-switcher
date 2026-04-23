@@ -1,6 +1,6 @@
 {
-  "name": "com.fiona.avatar-variant-switcher",
-  "displayName": "Fiona Avatar Variant Switcher",
+  "name": "com.lanstard.avatar-variant-switcher",
+  "displayName": "Lanstard Avatar Variant Switcher",
   "version": "0.1.0",
   "unity": "2022.3",
   "description": "Local VRChat avatar variant switcher package with menu generation, batch upload, mapping export, and OSC bridge helpers."

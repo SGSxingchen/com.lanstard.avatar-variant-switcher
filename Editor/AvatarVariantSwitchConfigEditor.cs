@@ -1,4 +1,4 @@
-using Fiona.AvatarVariantSwitcher;
+using Lanstard.AvatarVariantSwitcher;
 using UnityEditor;
 using UnityEngine;
 using VRC.SDK3.Avatars.Components;

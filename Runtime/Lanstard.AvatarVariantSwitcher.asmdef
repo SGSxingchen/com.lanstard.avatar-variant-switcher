@@ -1,6 +1,6 @@
 {
-    "name": "Fiona.AvatarVariantSwitcher",
-    "rootNamespace": "Fiona.AvatarVariantSwitcher",
+    "name": "Lanstard.AvatarVariantSwitcher",
+    "rootNamespace": "Lanstard.AvatarVariantSwitcher",
     "references": [
         "VRC.SDK3A",
         "VRC.SDKBase"

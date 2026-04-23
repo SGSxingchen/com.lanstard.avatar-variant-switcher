@@ -4,7 +4,7 @@ using UnityEngine;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 
-namespace Fiona.AvatarVariantSwitcher
+namespace Lanstard.AvatarVariantSwitcher
 {
     public enum AvatarReleaseStatus
     {
@@ -28,7 +28,7 @@ namespace Fiona.AvatarVariantSwitcher
     }
 
     [DisallowMultipleComponent]
-    [AddComponentMenu("Fiona/Avatar Variant Switch Config")]
+    [AddComponentMenu("Lanstard/Avatar Variant Switch Config")]
     public class AvatarVariantSwitchConfig : MonoBehaviour
     {
         public VRCAvatarDescriptor avatarDescriptor;
@@ -43,7 +43,7 @@ namespace Fiona.AvatarVariantSwitcher
         public string uploadedAvatarDescription = "";
 
         public AvatarReleaseStatus releaseStatus = AvatarReleaseStatus.Private;
-        public string mappingFilePath = "Packages/com.fiona.avatar-variant-switcher/Generated/avatar-switch-map.json";
+        public string mappingFilePath = "Packages/com.lanstard.avatar-variant-switcher/Generated/avatar-switch-map.json";
         public GameObject generatedMenuRoot;
         public List<AvatarVariantEntry> variants = new List<AvatarVariantEntry>();
 

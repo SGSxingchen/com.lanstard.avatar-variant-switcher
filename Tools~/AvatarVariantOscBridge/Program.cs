@@ -289,7 +289,7 @@ internal sealed class BridgeOptions
     private static void PrintUsage()
     {
         Console.WriteLine("Usage:");
-        Console.WriteLine("  dotnet run --project Packages/com.fiona.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- <mapping.json> [--host 127.0.0.1] [--listen-port 9001] [--send-port 9000]");
+        Console.WriteLine("  dotnet run --project Packages/com.lanstard.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- <mapping.json> [--host 127.0.0.1] [--listen-port 9001] [--send-port 9000]");
     }
 }
 

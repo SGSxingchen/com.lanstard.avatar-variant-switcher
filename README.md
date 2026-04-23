@@ -1,4 +1,4 @@
-# Fiona Avatar Variant Switcher
+# Lanstard Avatar Variant Switcher
 
 Local Unity package for VRChat avatar variant workflows.
 
@@ -17,18 +17,18 @@ Local Unity package for VRChat avatar variant workflows.
 
 ## Default Mapping Output
 
-- `Packages/com.fiona.avatar-variant-switcher/Generated/avatar-switch-map.json`
+- `Packages/com.lanstard.avatar-variant-switcher/Generated/avatar-switch-map.json`
 
 ## OSC Bridge
 
 PowerShell:
 
 ```powershell
-.\Packages\com.fiona.avatar-variant-switcher\Tools~\AvatarVariantOscBridge\RunAvatarVariantOscBridge.bat "D:\path\to\avatar-switch-map.json"
+.\Packages\com.lanstard.avatar-variant-switcher\Tools~\AvatarVariantOscBridge\RunAvatarVariantOscBridge.bat "D:\path\to\avatar-switch-map.json"
 ```
 
 C# source:
 
 ```powershell
-dotnet run --project Packages/com.fiona.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- "D:\path\to\avatar-switch-map.json"
+dotnet run --project Packages/com.lanstard.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- "D:\path\to\avatar-switch-map.json"
 ```

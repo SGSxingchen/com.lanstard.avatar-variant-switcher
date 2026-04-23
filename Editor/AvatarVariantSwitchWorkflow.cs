@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Fiona.AvatarVariantSwitcher;
+using Lanstard.AvatarVariantSwitcher;
 using nadena.dev.modular_avatar.core;
 using UnityEditor;
 using UnityEditor.SceneManagement;
