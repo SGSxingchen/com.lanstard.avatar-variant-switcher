@@ -365,12 +365,17 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     throw new InvalidOperationException("主 Avatar Root 缺少 PipelineManager。");
                 }
 
-                var controlledRoots = plan.variants
+                // includedRoots 并集——tag 翻转和 activeSelf 摆正都要覆盖它们；
+                // 但只有 includedRoots 需要 activeSelf 摆正，accessory 菜单 / _AccessoriesMenu
+                // 父节点不属于 activeSelf 作用域（它们靠 tag 的 EditorOnly 剥离）。
+                var includedRootsUnion = plan.variants
                     .SelectMany(variant => variant.includedRoots)
                     .Where(root => root != null)
                     .Where(root => !IsUnderMenuRoot(root, cfg))
                     .Distinct()
                     .ToList();
+
+                var controlledRoots = new List<GameObject>(includedRootsUnion);
 
                 // 把生成的所有配件 toggle GameObject 也纳入受控集：
                 // 每轮只保留当前装扮对应的 accessory 菜单项，其他装扮的配件菜单项本轮都 EditorOnly。
@@ -389,7 +394,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     controlledRoots.Add(accessoriesMenuRoot.gameObject);
                 }
 
-                guard = AvatarVariantTagGuard.Capture(pm, controlledRoots);
+                guard = AvatarVariantTagGuard.Capture(pm, controlledRoots, includedRootsUnion);
 
                 var builder = await AvatarVariantBuilderGate.AcquireAsync(cts.Token);
                 builder.SelectAvatar(plan.avatarRoot);
