@@ -88,6 +88,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 DrawPruneUi(config, report);
 
                 EditorGUILayout.Space();
+                EditorGUILayout.LabelField("缩略图自动生成", EditorStyles.boldLabel);
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button("生成缺失缩略图"))
+                {
+                    AvatarVariantThumbnailCapture.CaptureMissing(config);
+                }
+                if (GUILayout.Button("重拍全部缩略图"))
+                {
+                    AvatarVariantThumbnailCapture.CaptureAll(config);
+                }
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.Space();
+
                 if (GUILayout.Button("生成 / 刷新菜单"))
                 {
                     AvatarVariantSwitchWorkflow.GenerateMenu(config);
