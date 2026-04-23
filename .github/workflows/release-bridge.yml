@@ -1,0 +1,79 @@
+name: Release OSC Bridge
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish bridge (AOT, win-x64)
+        shell: pwsh
+        run: |
+          dotnet publish Tools~/AvatarVariantOscBridge `
+            -c Release `
+            -r win-x64 `
+            /p:PublishSingleFile=true `
+            -o publish
+
+      - name: Rename artifact and compute SHA256
+        id: artifact
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag) -or -not $tag.StartsWith('v')) {
+            $tag = "dev-$(Get-Date -Format 'yyyyMMddHHmmss')"
+          }
+          $exeSrc = "publish/AvatarVariantOscBridge.exe"
+          $exeDst = "publish/AvatarVariantOscBridge-$tag-win-x64.exe"
+          $hashDst = "$exeDst.sha256"
+
+          if (-not (Test-Path $exeSrc)) {
+            throw "Expected $exeSrc not found. Publish must have failed."
+          }
+
+          Move-Item $exeSrc $exeDst
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exeDst).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $exeDst -Leaf)" | Out-File -FilePath $hashDst -Encoding ASCII -NoNewline
+
+          "exe=$exeDst" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sha=$hashDst" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Verify no AOT warnings
+        shell: pwsh
+        run: |
+          Write-Host "Published asset: ${{ steps.artifact.outputs.exe }}"
+          Write-Host "SHA256 file:     ${{ steps.artifact.outputs.sha }}"
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.artifact.outputs.exe }}
+            ${{ steps.artifact.outputs.sha }}
+          generate_release_notes: true
+
+      - name: Upload as artifact (for workflow_dispatch)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-${{ steps.artifact.outputs.tag }}-win-x64
+          path: |
+            publish/AvatarVariantOscBridge-*-win-x64.exe
+            publish/AvatarVariantOscBridge-*-win-x64.exe.sha256
