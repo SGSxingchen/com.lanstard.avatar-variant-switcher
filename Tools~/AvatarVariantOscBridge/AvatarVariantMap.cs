@@ -1,20 +1,27 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AvatarVariantOscBridge;
 
 internal sealed class AvatarVariantMap
 {
+    [JsonPropertyName("schemaVersion")]
     public int SchemaVersion { get; set; } = 1;
-    public string GeneratedAtUtc { get; set; } = string.Empty;
-    public string ParameterName { get; set; } = string.Empty;
-    public string MenuName { get; set; } = string.Empty;
-    public int DefaultValue { get; set; }
-    public List<AvatarVariantMapEntry> Variants { get; set; } = new();
 
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    [JsonPropertyName("generatedAtUtc")]
+    public string GeneratedAtUtc { get; set; } = string.Empty;
+
+    [JsonPropertyName("parameterName")]
+    public string ParameterName { get; set; } = string.Empty;
+
+    [JsonPropertyName("menuName")]
+    public string MenuName { get; set; } = string.Empty;
+
+    [JsonPropertyName("defaultValue")]
+    public int DefaultValue { get; set; }
+
+    [JsonPropertyName("variants")]
+    public List<AvatarVariantMapEntry> Variants { get; set; } = new();
 
     public static AvatarVariantMap Load(string path)
     {
@@ -25,7 +32,7 @@ internal sealed class AvatarVariantMap
         if (string.IsNullOrWhiteSpace(json))
             throw new InvalidDataException("Mapping file is empty.");
 
-        var map = JsonSerializer.Deserialize<AvatarVariantMap>(json, Options);
+        var map = JsonSerializer.Deserialize(json, BridgeJsonContext.Default.AvatarVariantMap);
         if (map == null)
             throw new InvalidDataException("Failed to deserialize mapping file.");
 
@@ -39,8 +46,15 @@ internal sealed class AvatarVariantMap
 
 internal sealed class AvatarVariantMapEntry
 {
+    [JsonPropertyName("variantKey")]
     public string VariantKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("paramValue")]
     public int ParamValue { get; set; }
+
+    [JsonPropertyName("displayName")]
     public string DisplayName { get; set; } = string.Empty;
+
+    [JsonPropertyName("blueprintId")]
     public string BlueprintId { get; set; } = string.Empty;
 }
