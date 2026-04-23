@@ -394,16 +394,12 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 builder.SelectAvatar(plan.avatarRoot);
                 EditorSceneManager.SaveOpenScenes();
 
-                for (var i = 0; i < plan.variants.Count; i++)
+                // 单个装扮的上传体。null = 成功；FailureRecord = 失败（progress window 已 MarkFailure）。
+                // OperationCanceledException 照常上抛，触发整批的 EndSessionCancelled。
+                async Task<FailureRecord?> TryUploadOneVariantAsync(int index)
                 {
-                    if (progressWindow.CancelRequested)
-                    {
-                        cts.Cancel();
-                    }
-                    cts.Token.ThrowIfCancellationRequested();
-
-                    var variant = plan.variants[i];
-                    progressWindow.MarkBegin(i);
+                    var variant = plan.variants[index];
+                    progressWindow.MarkBegin(index);
 
                     try
                     {
@@ -462,7 +458,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
                         AvatarVariantMap.WriteAtomic(plan.outputMapPath, map);
 
-                        progressWindow.MarkSuccess(i, blueprintId);
+                        progressWindow.MarkSuccess(index, blueprintId);
+                        return null;
                     }
                     catch (OperationCanceledException)
                     {
@@ -470,15 +467,67 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     }
                     catch (Exception ex)
                     {
-                        progressWindow.MarkFailure(i, ex.Message);
-                        throw;
+                        var shortMsg = TruncateForDialog(ex.Message);
+                        progressWindow.MarkFailure(index, shortMsg);
+                        return new FailureRecord(index, variant.displayName, shortMsg);
                     }
-
-                    await Task.Delay(200, cts.Token);
                 }
 
-                progressWindow.EndSessionSuccess(null);
-                EditorUtility.DisplayDialog(DialogTitle, "批量上传完成。", "确定");
+                var pendingIndices = Enumerable.Range(0, plan.variants.Count).ToList();
+                var lastFailures = new List<FailureRecord>();
+
+                while (true)
+                {
+                    var passFailures = new List<FailureRecord>();
+                    foreach (var i in pendingIndices)
+                    {
+                        if (progressWindow.CancelRequested)
+                        {
+                            cts.Cancel();
+                        }
+                        cts.Token.ThrowIfCancellationRequested();
+
+                        var result = await TryUploadOneVariantAsync(i);
+                        if (result.HasValue)
+                        {
+                            passFailures.Add(result.Value);
+                        }
+
+                        await Task.Delay(200, cts.Token);
+                    }
+
+                    lastFailures = passFailures;
+                    if (passFailures.Count == 0)
+                    {
+                        break;
+                    }
+
+                    var dialogMessage = FormatFailureDialogMessage(passFailures);
+                    var retryChosen = EditorUtility.DisplayDialog(
+                        DialogTitle,
+                        dialogMessage,
+                        string.Format("重试失败的装扮（{0}）", passFailures.Count),
+                        "放弃");
+                    if (!retryChosen)
+                    {
+                        break;
+                    }
+
+                    pendingIndices = passFailures.Select(f => f.OriginalIndex).ToList();
+                    progressWindow.PrepareRetry(pendingIndices);
+                }
+
+                if (lastFailures.Count == 0)
+                {
+                    progressWindow.EndSessionSuccess(null);
+                    EditorUtility.DisplayDialog(DialogTitle, "批量上传完成。", "确定");
+                }
+                else
+                {
+                    progressWindow.EndSessionFailed(string.Format(
+                        "部分失败：{0}/{1} 个装扮未能上传；成功的已写入映射，稍后可重新点批量上传继续处理失败装扮。",
+                        lastFailures.Count, plan.variants.Count));
+                }
             }
             catch (OperationCanceledException)
             {
@@ -979,6 +1028,47 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             // 这条路径上来的 "already uploaded"，避免误吞 bundle 上传的同名错误。
             var fullStack = ex.ToString() ?? string.Empty;
             return fullStack.IndexOf("UpdateAvatarImage", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private readonly struct FailureRecord
+        {
+            public readonly int OriginalIndex;
+            public readonly string DisplayName;
+            public readonly string ErrorMessage;
+
+            public FailureRecord(int originalIndex, string displayName, string errorMessage)
+            {
+                OriginalIndex = originalIndex;
+                DisplayName = displayName ?? string.Empty;
+                ErrorMessage = errorMessage ?? string.Empty;
+            }
+        }
+
+        private static string TruncateForDialog(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            const int limit = 120;
+            if (s.Length <= limit) return s;
+            return s.Substring(0, limit) + "…";
+        }
+
+        private static string FormatFailureDialogMessage(IList<FailureRecord> failures)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("以下 ").Append(failures.Count).AppendLine(" 个装扮上传失败：");
+            sb.AppendLine();
+            foreach (var f in failures)
+            {
+                sb.Append("• ").Append(string.IsNullOrWhiteSpace(f.DisplayName) ? "未命名装扮" : f.DisplayName);
+                if (!string.IsNullOrWhiteSpace(f.ErrorMessage))
+                {
+                    sb.Append("  — ").Append(f.ErrorMessage);
+                }
+                sb.AppendLine();
+            }
+            sb.AppendLine();
+            sb.Append("是否重试这 ").Append(failures.Count).Append(" 个？已成功的装扮不会再次上传。");
+            return sb.ToString();
         }
 
         private static string ResolveMenuName(AvatarVariantSwitchConfig cfg)

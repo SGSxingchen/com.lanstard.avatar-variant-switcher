@@ -139,6 +139,36 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             RequestRepaint();
         }
 
+        public void PrepareRetry(IList<int> indicesToRetry)
+        {
+            // 清掉"会话已结束"的视觉状态，让窗口回到"进行中"模式——取消按钮能重新按、底部
+            // HelpBox 消失，_currentIndex 也复位（下一次 MarkBegin 会给它赋值）。
+            _sessionEnded = false;
+            _cancelRequested = false;
+            _finalMessage = null;
+            _finalSeverity = MessageType.Info;
+            _currentIndex = -1;
+
+            var resetCount = 0;
+            if (indicesToRetry != null)
+            {
+                foreach (var idx in indicesToRetry)
+                {
+                    if (idx < 0 || idx >= _rows.Count) continue;
+                    var row = _rows[idx];
+                    row.Status = VariantStatus.Pending;
+                    row.BlueprintId = null;
+                    row.ErrorMessage = null;
+                    row.StartedAt = 0;
+                    row.FinishedAt = 0;
+                    resetCount++;
+                }
+            }
+
+            Log(string.Format("开始重试 {0} 个失败装扮。", resetCount));
+            RequestRepaint();
+        }
+
         public void Log(string line)
         {
             if (string.IsNullOrEmpty(line)) return;
