@@ -5,7 +5,7 @@
 ## 硬前提
 
 **VRChat 的 `/avatar/change` OSC 命令只对"收藏夹里"的 avatar 生效。**
-首次上传完所有变体后，请在 VRChat 游戏内把每个变体都 ⭐ 加入收藏夹，否则本工具发出的切换指令会被客户端静默丢弃。
+首次上传完所有装扮后，请在 VRChat 游戏内把每个装扮都 ⭐ 加入收藏夹，否则本工具发出的切换指令会被客户端静默丢弃。
 
 ## 运行
 
@@ -40,8 +40,8 @@ Packages\com.lanstard.avatar-variant-switcher\Tools~\AvatarVariantOscBridge\RunA
 
 ## 行为
 
-- 启动时加载映射文件，列出所有变体及其 blueprint id。
-- 监听 `/avatar/parameters/<parameterName>`；当收到的 int 值发生变化时，查找对应变体并发送 `/avatar/change s <blueprintId>` 到 9000。
+- 启动时加载映射文件，列出所有装扮及其 blueprint id。
+- 监听 `/avatar/parameters/<parameterName>`；当收到的 int 值发生变化时，查找对应装扮并发送 `/avatar/change s <blueprintId>` 到 9000。
 - 监听 `/avatar/change` 反向消息，记录当前 avatar id，避免重复发送相同的切换命令。
 - 映射文件用 `FileSystemWatcher` 热重载（500ms 去抖）。解析失败时保留上一份有效映射、打印警告到 stderr；Unity 侧用 `WriteAtomic`（temp + rename）尽量避免读到半写入文件。
 - Ctrl+C 干净退出。

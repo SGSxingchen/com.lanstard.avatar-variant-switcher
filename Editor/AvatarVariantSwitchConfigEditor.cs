@@ -12,25 +12,25 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         private static readonly FieldLabel[] ConfigFields = new[]
         {
             new FieldLabel("avatarDescriptor",        "主 Avatar Descriptor",   "指向当前 avatar 的 VRCAvatarDescriptor；会自动从本物体上抓取。"),
-            new FieldLabel("parameterName",           "参数名",                 "Int 类型 Expression Parameter 的名称，所有变体共享这一个参数。"),
+            new FieldLabel("parameterName",           "参数名",                 "Int 类型 Expression Parameter 的名称，所有装扮共享这一个参数。"),
             new FieldLabel("menuName",                "子菜单标题",             "生成的 SubMenu 在 Expression Menu 里显示的名字。"),
-            new FieldLabel("defaultValue",            "默认值",                 "avatar 进场时参数的初始值；必须等于某一个变体的 paramValue。"),
-            new FieldLabel("releaseStatus",           "发布状态",               "Private / Public，应用于所有变体的上传。"),
+            new FieldLabel("defaultValue",            "默认值",                 "avatar 进场时参数的初始值；必须等于某一个装扮的 paramValue。"),
+            new FieldLabel("releaseStatus",           "发布状态",               "Private / Public，应用于所有装扮的上传。"),
             new FieldLabel("outputMapPath",           "映射文件输出路径",       "映射 JSON 的保存位置；建议放到 Assets/ 下，不要放到只读的 Packages/。"),
-            new FieldLabel("uploadedAvatarNamePrefix","上传名称前缀",           "可选；当变体的 uploadedName 为空时，用 \"前缀 + avatarRoot 名 - 变体名\" 拼出上传名。"),
+            new FieldLabel("uploadedAvatarNamePrefix","上传名称前缀",           "可选；当装扮的 uploadedName 为空时，用 \"前缀 + avatarRoot 名 - 装扮名\" 拼出上传名。"),
         };
 
-        // 每个变体的中文标签
+        // 每个装扮的中文标签
         private static readonly FieldLabel[] EntryFields = new[]
         {
             new FieldLabel("displayName",        "显示名称",      "菜单按钮文本，也是默认的上传名的一部分。"),
             new FieldLabel("variantKey",         "稳定标识",      "首次创建自动生成的 GUID，用来和映射文件对应；请不要手动修改。"),
-            new FieldLabel("paramValue",         "参数值",        "整数且在所有变体里唯一；菜单按钮按下会把 parameterName 设成这个值。"),
+            new FieldLabel("paramValue",         "参数值",        "整数且在所有装扮里唯一；菜单按钮按下会把 parameterName 设成这个值。"),
             new FieldLabel("thumbnail",          "缩略图",        "首次上传必填；必须是项目资源里的 Texture2D。"),
             new FieldLabel("menuIcon",           "菜单图标 (可选)","Expression Menu 按钮上显示的图标。"),
             new FieldLabel("uploadedName",       "上传名称 (可选)","留空则自动拼接；填了就用这个作为 VRChat 上该 blueprint 的名字。"),
             new FieldLabel("uploadedDescription","上传描述 (可选)","显示在 avatar 页面的描述文本。"),
-            new FieldLabel("includedRoots",      "保留的子物体",  "上传当前变体时要保留的装扮/配件根物体（勾选的这些 tag 会被设为 Untagged 参与打包，其他变体的装扮会被设为 EditorOnly 从包里排除）。\n主体永远保留的 Body / Hair / 面部等物体【不要】放进来，保持其他变体不引用的状态就行。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
+            new FieldLabel("includedRoots",      "在这里拖入这个装扮包含的衣服/配件",  "本装扮上传时要保留的衣服、配件根物体（会被设为 Untagged 进入打包）。\n其他装扮的衣服会被本插件设为 EditorOnly 从这次包里排除——不是从场景里删除，只是这一轮上传不带它。\n主体（Body / Hair / 面部 / 骨骼等）【不要】拖进来，不放就对了，插件完全不碰它们，它们会跟随每一次上传。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
         };
 
         private ReorderableList _variantsList;
@@ -40,7 +40,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             _variantsProperty = serializedObject.FindProperty("variants");
             _variantsList = new ReorderableList(serializedObject, _variantsProperty, true, true, true, true);
-            _variantsList.drawHeaderCallback = rect => EditorGUI.LabelField(rect, "变体列表");
+            _variantsList.drawHeaderCallback = rect => EditorGUI.LabelField(rect, "装扮列表");
             _variantsList.elementHeightCallback = GetElementHeight;
             _variantsList.drawElementCallback = DrawElement;
             _variantsList.onAddCallback = AddVariant;
@@ -87,7 +87,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     AvatarVariantSwitchWorkflow.GenerateMenu(config);
                 }
 
-                if (GUILayout.Button("批量上传所有变体"))
+                if (GUILayout.Button("批量上传所有装扮"))
                 {
                     AvatarVariantSwitchWorkflow.StartBatchUpload(config);
                 }
@@ -141,18 +141,18 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             EditorGUILayout.HelpBox(
                 "你现在大概有一个 avatar，里面塞了很多套衣服/配件。这个插件把「一次只上传一套衣服」的流程自动化：\n\n" +
-                "  ▸ 你只配一次【变体列表】——每个「变体」代表一套装扮，告诉插件「这套要保留哪些子物体」。\n" +
+                "  ▸ 你只配一次【装扮列表】——每个「装扮」= 一套搭配，把这套要包含的衣服/配件拖进对应条目里。\n" +
                 "  ▸ 点【批量上传】，插件会对同一个 avatar 反复上传 N 次：\n" +
-                "      - 每次把当前变体的「保留的子物体」设成 Untagged（进包）\n" +
-                "      - 其他变体的「保留的子物体」设成 EditorOnly（不进包）\n" +
+                "      - 每次把当前装扮下拖入的衣服/配件设成 Untagged（进包）\n" +
+                "      - 其他装扮下拖入的衣服/配件设成 EditorOnly（这次不进包，但场景不动）\n" +
                 "      - 得到一个独立的 blueprint id，写进映射文件\n" +
                 "  ▸ 批量结束后，场景里的 tag 和 blueprintId 会完整恢复，不会污染你的工程。\n" +
                 "  ▸ 游戏里把每个 blueprint 加入收藏夹，OSC 工具会监听参数变化自动切 avatar。\n\n" +
                 "举例：avatar 下面有 Body / Hair / 日常服 / 战斗服 / 泳装 四类物体，你想做 3 套切换，配置大概是：\n" +
-                "  • 变体 A：显示名=「日常」，参数值=0，保留=「日常服」\n" +
-                "  • 变体 B：显示名=「战斗」，参数值=1，保留=「战斗服」\n" +
-                "  • 变体 C：显示名=「泳装」，参数值=2，保留=「泳装」\n" +
-                "Body 和 Hair 这种永远要的主体物体【不要】放进任何变体的「保留的子物体」——没人引用它们，插件就不会碰它们的 tag，它们会一直跟随所有上传。",
+                "  • 装扮 A：显示名=「日常」，参数值=0，保留=「日常服」\n" +
+                "  • 装扮 B：显示名=「战斗」，参数值=1，保留=「战斗服」\n" +
+                "  • 装扮 C：显示名=「泳装」，参数值=2，保留=「泳装」\n" +
+                "Body / Hair / 面部 / 骨骼 这些主体物体【不要】拖进任何装扮——插件只会管拖进来的物体的 tag，没拖的会跟着每一次上传一起进包，不受影响。",
                 MessageType.Info);
             EditorGUILayout.Space();
         }
@@ -188,7 +188,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             serializedObject.UpdateIfRequiredOrScript();
 
             var element = _variantsProperty.GetArrayElementAtIndex(index);
-            element.FindPropertyRelative("displayName").stringValue = "新变体";
+            element.FindPropertyRelative("displayName").stringValue = "新装扮";
             element.FindPropertyRelative("variantKey").stringValue = Guid.NewGuid().ToString("N");
             element.FindPropertyRelative("paramValue").intValue = FindNextParamValue();
             element.FindPropertyRelative("thumbnail").objectReferenceValue = null;

@@ -18,7 +18,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 {
     public static class AvatarVariantSwitchWorkflow
     {
-        private const string DialogTitle = "Avatar 变体切换器";
+        private const string DialogTitle = "Avatar 装扮切换器";
         private const string GeneratedMenuRootName = "_AvatarSwitcherMenu";
         private static bool _busy;
 
@@ -203,11 +203,11 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             var variants = cfg.variants ?? new List<AvatarVariantEntry>();
             if (variants.Count == 0)
             {
-                report.Errors.Add("至少需要配置一个变体。");
+                report.Errors.Add("至少需要配置一个装扮。");
             }
             else if (variants.Count > 7)
             {
-                report.Errors.Add("当前版本最多支持 7 个变体；请先减少数量。");
+                report.Errors.Add("当前版本最多支持 7 个装扮；请先减少数量。");
             }
 
             var variantKeys = new HashSet<string>();
@@ -219,37 +219,37 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 var variant = variants[i];
                 if (variant == null)
                 {
-                    report.Errors.Add(string.Format("第 {0} 个变体为空。", i + 1));
+                    report.Errors.Add(string.Format("第 {0} 个装扮为空。", i + 1));
                     continue;
                 }
 
                 var label = GetVariantLabel(variant, i);
                 if (string.IsNullOrWhiteSpace(variant.displayName))
                 {
-                    report.Errors.Add(string.Format("变体 {0} 的显示名称不能为空。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 的显示名称不能为空。", label));
                 }
 
                 if (string.IsNullOrWhiteSpace(variant.variantKey))
                 {
-                    report.Errors.Add(string.Format("变体 {0} 缺少稳定标识 variantKey。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 缺少稳定标识 variantKey。", label));
                 }
                 else if (!variantKeys.Add(variant.variantKey))
                 {
-                    report.Errors.Add(string.Format("变体 {0} 的 variantKey 与其他变体重复。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 的 variantKey 与其他装扮重复。", label));
                 }
 
                 if (variant.paramValue < 0)
                 {
-                    report.Errors.Add(string.Format("变体 {0} 的 paramValue 不能小于 0。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 的 paramValue 不能小于 0。", label));
                 }
                 else if (!paramValues.Add(variant.paramValue))
                 {
-                    report.Errors.Add(string.Format("变体 {0} 的 paramValue 与其他变体重复。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 的 paramValue 与其他装扮重复。", label));
                 }
 
                 if (variant.includedRoots == null)
                 {
-                    report.Errors.Add(string.Format("变体 {0} 的 includedRoots 不能为空。", label));
+                    report.Errors.Add(string.Format("装扮 {0} 的 includedRoots 不能为空。", label));
                     continue;
                 }
 
@@ -257,13 +257,13 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     if (!root.transform.IsChildOf(avatarRoot.transform))
                     {
-                        report.Errors.Add(string.Format("变体 {0} 引用了不属于当前 Avatar Root 的对象：{1}。", label, root.name));
+                        report.Errors.Add(string.Format("装扮 {0} 引用了不属于当前 Avatar Root 的对象：{1}。", label, root.name));
                         continue;
                     }
 
                     if (IsUnderMenuRoot(root, cfg))
                     {
-                        report.Errors.Add(string.Format("变体 {0} 不能包含 _AvatarSwitcherMenu 或其子物体：{1}。", label, root.name));
+                        report.Errors.Add(string.Format("装扮 {0} 不能包含 _AvatarSwitcherMenu 或其子物体：{1}。", label, root.name));
                         continue;
                     }
 
@@ -285,7 +285,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             if (variants.Count > 0 && !variants.Any(variant => variant != null && variant.paramValue == cfg.defaultValue))
             {
-                report.Errors.Add("defaultValue 必须对应某一个变体的 paramValue。");
+                report.Errors.Add("defaultValue 必须对应某一个装扮的 paramValue。");
             }
 
             ValidateControlledRoots(controlledRoots, report);
@@ -370,7 +370,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     var blueprintId = pm.blueprintId ?? string.Empty;
                     if (string.IsNullOrWhiteSpace(blueprintId))
                     {
-                        throw new InvalidOperationException(string.Format("变体“{0}”上传完成后没有得到 blueprintId。", variant.displayName));
+                        throw new InvalidOperationException(string.Format("装扮“{0}”上传完成后没有得到 blueprintId。", variant.displayName));
                     }
 
                     map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
@@ -583,7 +583,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             var controls = avatarDescriptor.expressionsMenu.controls;
             if (controls != null && controls.Count > 7)
             {
-                report.Errors.Add("主 Expressions Menu 至少需要预留 1 个槽位给变体切换入口。");
+                report.Errors.Add("主 Expressions Menu 至少需要预留 1 个槽位给装扮切换入口。");
             }
         }
 
@@ -628,19 +628,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             if (thumbnail == null)
             {
-                throw new InvalidOperationException(string.Format("变体 {0} 缺少缩略图。", variantLabel));
+                throw new InvalidOperationException(string.Format("装扮 {0} 缺少缩略图。", variantLabel));
             }
 
             var assetPath = AssetDatabase.GetAssetPath(thumbnail);
             if (string.IsNullOrWhiteSpace(assetPath))
             {
-                throw new InvalidOperationException(string.Format("变体 {0} 的缩略图不是有效的项目资源。", variantLabel));
+                throw new InvalidOperationException(string.Format("装扮 {0} 的缩略图不是有效的项目资源。", variantLabel));
             }
 
             var fullPath = Path.GetFullPath(assetPath);
             if (!File.Exists(fullPath))
             {
-                throw new InvalidOperationException(string.Format("变体 {0} 的缩略图文件不存在：{1}", variantLabel, fullPath));
+                throw new InvalidOperationException(string.Format("装扮 {0} 的缩略图文件不存在：{1}", variantLabel, fullPath));
             }
 
             return fullPath;
