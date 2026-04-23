@@ -23,10 +23,11 @@ jobs:
       - name: Publish bridge (AOT, win-x64)
         shell: pwsh
         run: |
+          # NativeAOT 本身就产出单一原生 exe；PublishSingleFile 是给 managed 发布用的，
+          # 两者同时开会报 "PublishAot and PublishSingleFile cannot be specified at the same time"。
           dotnet publish Tools~/AvatarVariantOscBridge `
             -c Release `
             -r win-x64 `
-            /p:PublishSingleFile=true `
             -o publish
 
       - name: Rename artifact and compute SHA256
