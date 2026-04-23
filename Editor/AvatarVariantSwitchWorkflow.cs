@@ -337,12 +337,21 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             _busy = true;
             using var cts = new CancellationTokenSource();
             AvatarVariantTagGuard guard = null;
+            AvatarVariantUploadProgressWindow progressWindow = null;
             EditorApplication.LockReloadAssemblies();
 
             try
             {
                 var plan = BatchPlan.Snapshot(cfg);
                 AvatarVariantMenuBuilder.Generate(cfg);
+
+                var planItems = new List<AvatarVariantUploadProgressWindow.VariantPlanItem>();
+                foreach (var v in plan.variants)
+                {
+                    planItems.Add(new AvatarVariantUploadProgressWindow.VariantPlanItem(
+                        v.displayName, v.variantKey, v.thumbnailAsset));
+                }
+                progressWindow = AvatarVariantUploadProgressWindow.ShowAndBegin(planItems);
 
                 var map = AvatarVariantMap.Read(plan.outputMapPath);
                 map.parameterName = plan.parameterName;
@@ -387,65 +396,87 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
                 for (var i = 0; i < plan.variants.Count; i++)
                 {
-                    cts.Token.ThrowIfCancellationRequested();
-                    var variant = plan.variants[i];
-                    if (EditorUtility.DisplayCancelableProgressBar(
-                            DialogTitle,
-                            string.Format("正在上传 {0}/{1}：{2}", i + 1, plan.variants.Count, variant.displayName),
-                            (float)i / Math.Max(1, plan.variants.Count)))
+                    if (progressWindow.CancelRequested)
                     {
                         cts.Cancel();
                     }
-
                     cts.Token.ThrowIfCancellationRequested();
 
-                    var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
-                    var hasActiveAccessoryMenuItems = false;
-                    foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
+                    var variant = plan.variants[i];
+                    progressWindow.MarkBegin(i);
+
+                    try
                     {
-                        if (accGo == null)
+                        var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
+                        var hasActiveAccessoryMenuItems = false;
+                        foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
                         {
-                            continue;
+                            if (accGo == null)
+                            {
+                                continue;
+                            }
+
+                            activeSet.Add(accGo);
+                            hasActiveAccessoryMenuItems = true;
+                        }
+                        if (hasActiveAccessoryMenuItems && accessoriesMenuRoot != null)
+                        {
+                            activeSet.Add(accessoriesMenuRoot.gameObject);
+                        }
+                        guard.ApplyActive(activeSet);
+
+                        guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
+
+                        EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
+                        EditorSceneManager.SaveOpenScenes();
+
+                        var record = new VRCAvatar
+                        {
+                            ID = pm.blueprintId ?? string.Empty,
+                            Name = ResolveUploadedName(plan, variant),
+                            Description = ResolveUploadedDescription(plan, variant),
+                            Tags = new List<string>(),
+                            ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
+                        };
+
+                        await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
+
+                        var blueprintId = pm.blueprintId ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(blueprintId))
+                        {
+                            throw new InvalidOperationException(string.Format("装扮“{0}”上传完成后没有得到 blueprintId。", variant.displayName));
                         }
 
-                        activeSet.Add(accGo);
-                        hasActiveAccessoryMenuItems = true;
+                        map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
+                        AvatarVariantMap.WriteAtomic(plan.outputMapPath, map);
+
+                        progressWindow.MarkSuccess(i, blueprintId);
                     }
-                    if (hasActiveAccessoryMenuItems && accessoriesMenuRoot != null)
+                    catch (OperationCanceledException)
                     {
-                        activeSet.Add(accessoriesMenuRoot.gameObject);
+                        throw;
                     }
-                    guard.ApplyActive(activeSet);
-
-                    guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
-
-                    EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
-                    EditorSceneManager.SaveOpenScenes();
-
-                    var record = new VRCAvatar
+                    catch (Exception ex)
                     {
-                        ID = pm.blueprintId ?? string.Empty,
-                        Name = ResolveUploadedName(plan, variant),
-                        Description = ResolveUploadedDescription(plan, variant),
-                        Tags = new List<string>(),
-                        ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
-                    };
-
-                    await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
-
-                    var blueprintId = pm.blueprintId ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(blueprintId))
-                    {
-                        throw new InvalidOperationException(string.Format("装扮“{0}”上传完成后没有得到 blueprintId。", variant.displayName));
+                        progressWindow.MarkFailure(i, ex.Message);
+                        throw;
                     }
-
-                    map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
-                    AvatarVariantMap.WriteAtomic(plan.outputMapPath, map);
 
                     await Task.Delay(200, cts.Token);
                 }
 
+                progressWindow.EndSessionSuccess(null);
                 EditorUtility.DisplayDialog(DialogTitle, "批量上传完成。", "确定");
+            }
+            catch (OperationCanceledException)
+            {
+                if (progressWindow != null) progressWindow.EndSessionCancelled(null);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (progressWindow != null) progressWindow.EndSessionFailed(ex.Message);
+                throw;
             }
             finally
             {
@@ -1037,11 +1068,13 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 var variants = new List<BatchVariantPlan>();
                 foreach (var variant in cfg.variants)
                 {
+                    var thumbnailAsset = ResolveVariantThumbnail(cfg, variant);
                     variants.Add(new BatchVariantPlan(
                         variant.displayName ?? string.Empty,
                         variant.variantKey ?? string.Empty,
                         variant.paramValue,
-                        ResolveThumbnailPath(ResolveVariantThumbnail(cfg, variant), GetVariantLabel(variant, variants.Count)),
+                        ResolveThumbnailPath(thumbnailAsset, GetVariantLabel(variant, variants.Count)),
+                        thumbnailAsset,
                         variant.uploadedName ?? string.Empty,
                         variant.uploadedDescription ?? string.Empty,
                         variant.legacyUploadedBlueprintId ?? string.Empty,
@@ -1067,6 +1100,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             public readonly string variantKey;
             public readonly int paramValue;
             public readonly string thumbnailPath;
+            public readonly Texture2D thumbnailAsset;
             public readonly string uploadedName;
             public readonly string uploadedDescription;
             public readonly string legacyUploadedBlueprintId;
@@ -1077,6 +1111,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 string variantKey,
                 int paramValue,
                 string thumbnailPath,
+                Texture2D thumbnailAsset,
                 string uploadedName,
                 string uploadedDescription,
                 string legacyUploadedBlueprintId,
@@ -1086,6 +1121,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 this.variantKey = variantKey;
                 this.paramValue = paramValue;
                 this.thumbnailPath = thumbnailPath;
+                this.thumbnailAsset = thumbnailAsset;
                 this.uploadedName = uploadedName;
                 this.uploadedDescription = uploadedDescription;
                 this.legacyUploadedBlueprintId = legacyUploadedBlueprintId;
