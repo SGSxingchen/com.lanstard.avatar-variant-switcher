@@ -4,12 +4,13 @@ using UnityEngine;
 using UnityEngine.Serialization;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
+using VRC.SDKBase;
 
 namespace Lanstard.AvatarVariantSwitcher
 {
     [DisallowMultipleComponent]
     [AddComponentMenu("Lanstard/Avatar 装扮切换配置")]
-    public class AvatarVariantSwitchConfig : MonoBehaviour
+    public class AvatarVariantSwitchConfig : MonoBehaviour, IEditorOnly
     {
         public VRCAvatarDescriptor avatarDescriptor;
         public string parameterName = "AvatarVariant";
