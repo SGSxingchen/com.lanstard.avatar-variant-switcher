@@ -7,6 +7,10 @@
   "author": {
     "name": "lanstard"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SGSxingchen/com.lanstard.avatar-variant-switcher.git"
+  },
   "vpmDependencies": {
     "com.vrchat.avatars": ">=3.9.0",
     "nadena.dev.modular-avatar": ">=1.10.0"
