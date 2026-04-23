@@ -18,7 +18,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 {
     public static class AvatarVariantSwitchWorkflow
     {
-        private const string DialogTitle = "Avatar Variant Switcher";
+        private const string DialogTitle = "Avatar 变体切换器";
         private const string GeneratedMenuRootName = "_AvatarSwitcherMenu";
         private static bool _busy;
 
@@ -117,7 +117,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 if (!EditorUtility.DisplayDialog(
                         DialogTitle,
                         string.Format("映射文件里有 {0} 条当前配置已不存在的旧记录，确认删除吗？", report.StaleVariants.Count),
-                        "Prune",
+                        "清理",
                         "取消"))
                 {
                     return;

@@ -6,7 +6,7 @@ using VRC.SDK3.Avatars.Components;
 namespace Lanstard.AvatarVariantSwitcher
 {
     [DisallowMultipleComponent]
-    [AddComponentMenu("Lanstard/Avatar Variant Switch Config")]
+    [AddComponentMenu("Lanstard/Avatar 变体切换配置")]
     public class AvatarVariantSwitchConfig : MonoBehaviour
     {
         public VRCAvatarDescriptor avatarDescriptor;
