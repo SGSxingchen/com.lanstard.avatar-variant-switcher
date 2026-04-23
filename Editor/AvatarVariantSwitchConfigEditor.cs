@@ -30,7 +30,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             new FieldLabel("menuIcon",           "菜单图标 (可选)","Expression Menu 按钮上显示的图标。"),
             new FieldLabel("uploadedName",       "上传名称 (可选)","留空则自动拼接；填了就用这个作为 VRChat 上该 blueprint 的名字。"),
             new FieldLabel("uploadedDescription","上传描述 (可选)","显示在 avatar 页面的描述文本。"),
-            new FieldLabel("includedRoots",      "保留的子物体",  "该变体需要保留为 Untagged 的装扮根节点；其他变体的受控 roots 会被设为 EditorOnly。不得包含 _AvatarSwitcherMenu 或其子物体。"),
+            new FieldLabel("includedRoots",      "保留的子物体",  "上传当前变体时要保留的装扮/配件根物体（勾选的这些 tag 会被设为 Untagged 参与打包，其他变体的装扮会被设为 EditorOnly 从包里排除）。\n主体永远保留的 Body / Hair / 面部等物体【不要】放进来，保持其他变体不引用的状态就行。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
         };
 
         private ReorderableList _variantsList;
@@ -46,12 +46,16 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             _variantsList.onAddCallback = AddVariant;
         }
 
+        private const string HelpFoldoutKey = "Lanstard.AvatarVariantSwitcher.ShowHelp";
+
         public override void OnInspectorGUI()
         {
             var config = (AvatarVariantSwitchConfig)target;
             EnsureVariantKeys(config);
 
             serializedObject.UpdateIfRequiredOrScript();
+
+            DrawHelp();
 
             var report = AvatarVariantSwitchWorkflow.BuildValidationReport(config, false);
             DrawValidation(report);
@@ -123,6 +127,34 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             {
                 EditorGUILayout.HelpBox(string.Join("\n", report.Warnings.ToArray()), MessageType.Warning);
             }
+        }
+
+        private static void DrawHelp()
+        {
+            var open = EditorPrefs.GetBool(HelpFoldoutKey, true);
+            var newOpen = EditorGUILayout.Foldout(open, "这个插件怎么用？（点我展开/折叠）", true, EditorStyles.foldoutHeader);
+            if (newOpen != open)
+            {
+                EditorPrefs.SetBool(HelpFoldoutKey, newOpen);
+            }
+            if (!newOpen) return;
+
+            EditorGUILayout.HelpBox(
+                "你现在大概有一个 avatar，里面塞了很多套衣服/配件。这个插件把「一次只上传一套衣服」的流程自动化：\n\n" +
+                "  ▸ 你只配一次【变体列表】——每个「变体」代表一套装扮，告诉插件「这套要保留哪些子物体」。\n" +
+                "  ▸ 点【批量上传】，插件会对同一个 avatar 反复上传 N 次：\n" +
+                "      - 每次把当前变体的「保留的子物体」设成 Untagged（进包）\n" +
+                "      - 其他变体的「保留的子物体」设成 EditorOnly（不进包）\n" +
+                "      - 得到一个独立的 blueprint id，写进映射文件\n" +
+                "  ▸ 批量结束后，场景里的 tag 和 blueprintId 会完整恢复，不会污染你的工程。\n" +
+                "  ▸ 游戏里把每个 blueprint 加入收藏夹，OSC 工具会监听参数变化自动切 avatar。\n\n" +
+                "举例：avatar 下面有 Body / Hair / 日常服 / 战斗服 / 泳装 四类物体，你想做 3 套切换，配置大概是：\n" +
+                "  • 变体 A：显示名=「日常」，参数值=0，保留=「日常服」\n" +
+                "  • 变体 B：显示名=「战斗」，参数值=1，保留=「战斗服」\n" +
+                "  • 变体 C：显示名=「泳装」，参数值=2，保留=「泳装」\n" +
+                "Body 和 Hair 这种永远要的主体物体【不要】放进任何变体的「保留的子物体」——没人引用它们，插件就不会碰它们的 tag，它们会一直跟随所有上传。",
+                MessageType.Info);
+            EditorGUILayout.Space();
         }
 
         private void DrawPruneUi(AvatarVariantSwitchConfig config, AvatarVariantSwitchWorkflow.ValidationReport report)
