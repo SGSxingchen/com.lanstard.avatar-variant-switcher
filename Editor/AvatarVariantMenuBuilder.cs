@@ -257,25 +257,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         private static AvatarObjectReference BuildAvatarReference(GameObject avatarRoot, GameObject target)
         {
             var reference = new AvatarObjectReference();
-            if (avatarRoot != null && target != null && target.transform.IsChildOf(avatarRoot.transform))
-            {
-                reference.referencePath = GetRelativePath(avatarRoot.transform, target.transform);
-            }
-            reference.targetObject = target;
+            reference.Set(target);
             return reference;
-        }
-
-        private static string GetRelativePath(Transform root, Transform target)
-        {
-            if (target == root) return string.Empty;
-            var segments = new Stack<string>();
-            var t = target;
-            while (t != null && t != root)
-            {
-                segments.Push(t.name);
-                t = t.parent;
-            }
-            return string.Join("/", segments);
         }
 
         private static void RemoveLegacyRoot(Transform avatarRoot)
