@@ -41,7 +41,7 @@ VRChat 同一 avatar 多套衣服/配件装扮的批量上传 + OSC 切换工具
 | `Editor/AvatarVariantTagGuard.cs` | 受控 roots tag + blueprintId 快照 / 应用 / 还原 |
 | `Editor/AvatarVariantMap.cs` | 映射 JSON 读写（atomic write + prune） |
 | `Editor/AvatarVariantBuilderGate.cs` | VRChat SDK Builder 打开 + 登录态保障 |
-| `Tools~/AvatarVariantOscBridge/` | 独立 .NET 8 OSC 桥（监听 9001 / 发 9000） |
+| `Tools~/AvatarVariantOscBridge/` | 独立 .NET 8 OSC 桥（默认走 OSCQuery 自动发现，`--legacy` 回到 9000/9001） |
 
 ## 使用流程
 
@@ -58,19 +58,50 @@ VRChat 同一 avatar 多套衣服/配件装扮的批量上传 + OSC 切换工具
    - 串行对每个装扮：设 tag、从 map 回填 blueprintId（若存在 → 更新；若不存在 → 清空 → 新建）、上传、记录新 id、原子写 map。
    - 完成或中途取消后：Restore tag + Restore blueprintId + Unlock reload。
 7. 首次上传完后，打开 VRChat，**把每个装扮都 ⭐ 收藏**（下文的 OSC 切换硬前提）。
-8. 启动 OSC Bridge：
-
-   ```powershell
-   dotnet run --project Packages/com.lanstard.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- --map "<绝对路径>/avatar-switch-map.json"
-   ```
-
-   或 PowerShell 后备版本：
-
-   ```bat
-   Packages\com.lanstard.avatar-variant-switcher\Tools~\AvatarVariantOscBridge\RunAvatarVariantOscBridge.bat "D:\...\avatar-switch-map.json"
-   ```
+8. 启动 OSC 桥：点 Inspector 底部的 **[启动 OSC 桥]** 按钮。首次点会自动从 [GitHub Release](https://github.com/SGSxingchen/com.lanstard.avatar-variant-switcher/releases/latest) 下载桥 exe 到 `%LOCALAPPDATA%\LanstardAvatarVariantBridge\`（约 10MB 单文件、无运行时依赖），之后点秒开。弹出的黑色 console 窗口就是桥，**关窗口 = 停桥**。断网时会用本地已下载的版本继续工作。
 
 9. 游戏内选 Expression Menu → Switch Variant → 某个装扮 → OSC 工具收到参数变化 → 发 `/avatar/change` → VRChat 切 avatar。
+
+## 启动 OSC 桥的其他方式
+
+**大多数用户不需要看这节** —— 直接用使用流程第 8 步的 Inspector 按钮即可。本节是给开发者、或者 Inspector 按钮暂时不可用场景（比如想本地跑源码版本）准备的。
+
+### 直接双击 exe
+
+从 [Releases](https://github.com/SGSxingchen/com.lanstard.avatar-variant-switcher/releases/latest) 下载 `AvatarVariantOscBridge-*-win-x64.exe`，双击即可：
+
+- 首次启动：弹文件选择框，选 `avatar-switch-map.json`
+- 之后启动：自动用上次选过的路径
+
+也可以通过命令行覆盖参数：
+
+```bash
+AvatarVariantOscBridge.exe --map "D:\path\to\avatar-switch-map.json"
+```
+
+### 从源码运行（需要 .NET 8 SDK）
+
+```powershell
+dotnet run --project Packages/com.lanstard.avatar-variant-switcher/Tools~/AvatarVariantOscBridge -- --map "<绝对路径>/avatar-switch-map.json"
+```
+
+### 没装 .NET 的 PowerShell 后备版
+
+```bat
+Packages\com.lanstard.avatar-variant-switcher\Tools~\AvatarVariantOscBridge\RunAvatarVariantOscBridge.bat "D:\...\avatar-switch-map.json"
+```
+
+### 关于 OSCQuery / legacy 模式
+
+桥默认走 **OSCQuery 自动发现**（通过 mDNS 找 VRChat，动态分配 UDP 端口），跟 VRCOSC、OSCLeash、bHapticsOSC 等工具天然共存。启动日志里会看到 `Mode: OSCQuery (mDNS auto-discovery)`；VRChat 开起来后桥会打出 `VRChat discovered at 127.0.0.1:XXXXX`。
+
+要回到旧的硬编码 9000/9001 模式（比如跟老的 OSC 路由器或 PowerShell 后备版本并行跑），加 `--legacy`：
+
+```powershell
+AvatarVariantOscBridge.exe --legacy --map "..."
+```
+
+PowerShell 后备版本永远是 legacy 行为，没有 OSCQuery 支持。
 
 ## 映射文件 schema
 
