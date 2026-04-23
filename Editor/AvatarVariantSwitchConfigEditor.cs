@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
@@ -32,7 +33,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             new FieldLabel("uploadedName",       "上传名称 (可选)","留空则自动拼接；填了就用这个作为 VRChat 上该 blueprint 的名字。"),
             new FieldLabel("uploadedDescription","上传描述 (可选)","显示在 avatar 页面的描述文本。"),
             new FieldLabel("includedRoots",      "在这里拖入这个装扮包含的衣服/配件",  "本装扮上传时要保留的衣服、配件根物体（会被设为 Untagged 进入打包）。\n其他装扮的衣服会被本插件设为 EditorOnly 从这次包里排除——不是从场景里删除，只是这一轮上传不带它。\n主体（Body / Hair / 面部 / 骨骼等）【不要】拖进来，不放就对了，插件完全不碰它们，它们会跟随每一次上传。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
-            new FieldLabel("accessories",        "这个装扮的配件菜单（可选）",      "给这套装扮生成一组 Toggle 菜单项（帽子 / 眼镜 / 项链…）。每项：\n • target: 要开关的 GameObject（通常是 includedRoots 里物体的子物体）。\n • displayName: 菜单按钮文本；留空则用 target 的名字。\n • icon: 可选图标。\n • defaultOn: 打开此装扮时默认开还是关。\n不配就不生成。点下方「扫一层子物体自动填配件」自动从 includedRoots 的直接子物体里挑。"),
+            new FieldLabel("accessories",        "这个装扮的配件菜单（可选）",      "给这套装扮生成一组 Toggle 菜单项（帽子 / 眼镜 / 项链…）。每项：\n • target: 要开关的 GameObject（通常是 includedRoots 里物体的子物体）。\n • displayName: 菜单按钮文本；留空则用 target 的名字。\n • icon: 可选图标。\n • defaultOn: 打开此装扮时默认开还是关。\n\n拖一个新的 root 到 includedRoots 后，它的直接子物体会被自动追加进来（首次一次性扫描）。不想要的手动删掉，删掉后不会再自动加回。如果后来你在场景里给某个 root 加了新的子物体，点下面的「强制重扫」手动拾取。"),
         };
 
         private ReorderableList _variantsList;
@@ -54,6 +55,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             var config = (AvatarVariantSwitchConfig)target;
             EnsureVariantKeys(config);
+            AutoScanNewRoots(config);
 
             serializedObject.UpdateIfRequiredOrScript();
 
@@ -113,6 +115,65 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 if (!string.IsNullOrWhiteSpace(variant.variantKey)) continue;
                 variant.variantKey = Guid.NewGuid().ToString("N");
                 changed = true;
+            }
+
+            if (changed) EditorUtility.SetDirty(config);
+        }
+
+        // 每次 Inspector 刷新时比较每个装扮的 includedRoots 与 autoScannedRoots:
+        //   - 从 includedRoots 新加入、还没扫过的 root → 自动把它的直接子物体追加到 accessories
+        //   - 已经从 includedRoots 移除的 root → 从 autoScannedRoots 里剔除（下次再加回去可以重扫）
+        // accessories 本身永远非破坏性追加；用户手动删掉的不会被自动加回来。
+        private static void AutoScanNewRoots(AvatarVariantSwitchConfig config)
+        {
+            if (config == null || config.variants == null) return;
+
+            var changed = false;
+            foreach (var entry in config.variants)
+            {
+                if (entry == null) continue;
+                entry.includedRoots ??= new List<GameObject>();
+                entry.accessories ??= new List<AvatarVariantAccessory>();
+                entry.autoScannedRoots ??= new List<GameObject>();
+
+                // 剔除 autoScannedRoots 里已经不在 includedRoots 里的条目（被用户删掉的 root）
+                var includedSet = new HashSet<GameObject>(entry.includedRoots.Where(r => r != null));
+                var beforeCount = entry.autoScannedRoots.Count;
+                entry.autoScannedRoots.RemoveAll(r => r == null || !includedSet.Contains(r));
+                if (entry.autoScannedRoots.Count != beforeCount) changed = true;
+
+                // 找出新加入还没扫过的 root，扫它们的直接子物体
+                var scannedSet = new HashSet<GameObject>(entry.autoScannedRoots.Where(r => r != null));
+                var existingTargets = new HashSet<GameObject>();
+                foreach (var acc in entry.accessories)
+                {
+                    if (acc != null && acc.target != null) existingTargets.Add(acc.target);
+                }
+
+                foreach (var root in entry.includedRoots)
+                {
+                    if (root == null) continue;
+                    if (scannedSet.Contains(root)) continue;
+
+                    for (int ci = 0; ci < root.transform.childCount; ci++)
+                    {
+                        var child = root.transform.GetChild(ci).gameObject;
+                        if (child == null) continue;
+                        if (existingTargets.Contains(child)) continue;
+                        entry.accessories.Add(new AvatarVariantAccessory
+                        {
+                            target = child,
+                            displayName = child.name,
+                            defaultOn = true
+                        });
+                        existingTargets.Add(child);
+                        changed = true;
+                    }
+
+                    entry.autoScannedRoots.Add(root);
+                    scannedSet.Add(root);
+                    changed = true;
+                }
             }
 
             if (changed) EditorUtility.SetDirty(config);
@@ -200,6 +261,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             element.FindPropertyRelative("includedRoots").arraySize = 0;
             var accProp = element.FindPropertyRelative("accessories");
             if (accProp != null) accProp.arraySize = 0;
+            var scannedProp = element.FindPropertyRelative("autoScannedRoots");
+            if (scannedProp != null) scannedProp.arraySize = 0;
 
             serializedObject.ApplyModifiedProperties();
         }
@@ -248,7 +311,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             // 扫描按钮：从当前 entry 的 includedRoots 的直接子物体自动追加到 accessories（不覆盖已有）
             var scanRect = new Rect(rect.x, rect.y, rect.width, ScanButtonHeight);
-            if (GUI.Button(scanRect, "扫一层子物体自动填配件"))
+            if (GUI.Button(scanRect, "强制重扫所有 root 的子物体（拖入 root 时已自动扫过，此按钮用于手动拾取后加的子物体）"))
             {
                 ScanAccessoriesForEntry(index);
             }

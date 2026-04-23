@@ -27,6 +27,11 @@ namespace Lanstard.AvatarVariantSwitcher
 
         public List<AvatarVariantAccessory> accessories = new List<AvatarVariantAccessory>();
 
+        // CustomEditor 用来记住每个 includedRoots 已经被扫过一次，避免反复追加用户手动删掉的条目。
+        // 被移出 includedRoots 后自动从这里清掉，重新加回则会再次触发一次扫描。
+        [HideInInspector]
+        public List<GameObject> autoScannedRoots = new List<GameObject>();
+
         [HideInInspector]
         [FormerlySerializedAs("uploadedBlueprintId")]
         public string legacyUploadedBlueprintId = string.Empty;
