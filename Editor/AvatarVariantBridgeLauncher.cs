@@ -113,27 +113,34 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             EditorUtility.DisplayProgressBar("OSC 桥", $"下载 {latest.TagName}...", 0.4f);
             var tmp = BridgeExePath + ".tmp";
-            DownloadFile(latest.ExeUrl, tmp);
-
-            EditorUtility.DisplayProgressBar("OSC 桥", "校验 SHA256...", 0.8f);
-            var shaResponse = DownloadString(latest.ShaUrl);
-            var expectedSha = shaResponse
-                .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0]
-                .Trim().ToLowerInvariant();
-            var actualSha = ComputeSha256(tmp);
-            if (!string.Equals(expectedSha, actualSha, StringComparison.Ordinal))
+            try
             {
-                File.Delete(tmp);
-                throw new InvalidDataException($"SHA256 mismatch. expected={expectedSha} actual={actualSha}");
+                DownloadFile(latest.ExeUrl, tmp);
+
+                EditorUtility.DisplayProgressBar("OSC 桥", "校验 SHA256...", 0.8f);
+                var shaResponse = DownloadString(latest.ShaUrl);
+                var expectedSha = shaResponse
+                    .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0]
+                    .Trim().ToLowerInvariant();
+                var actualSha = ComputeSha256(tmp);
+                if (!string.Equals(expectedSha, actualSha, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException($"SHA256 mismatch. expected={expectedSha} actual={actualSha}");
+                }
+
+                if (File.Exists(BridgeExePath))
+                    File.Replace(tmp, BridgeExePath, null);
+                else
+                    File.Move(tmp, BridgeExePath);
+
+                File.WriteAllText(VersionPath, latest.TagName);
+                return BridgeExePath;
             }
-
-            if (File.Exists(BridgeExePath))
-                File.Replace(tmp, BridgeExePath, null);
-            else
-                File.Move(tmp, BridgeExePath);
-
-            File.WriteAllText(VersionPath, latest.TagName);
-            return BridgeExePath;
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* ignore cleanup failure */ }
+                throw;
+            }
         }
 
         private static ReleaseInfo QueryLatestRelease()
