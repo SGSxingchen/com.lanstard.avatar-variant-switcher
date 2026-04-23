@@ -79,6 +79,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 }
 
                 EditorGUILayout.Space();
+                DrawVariantDropZone(config);
                 _variantsList.DoLayoutList();
                 serializedObject.ApplyModifiedProperties();
 
@@ -101,6 +102,121 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     AvatarVariantSwitchWorkflow.WriteMap(config);
                 }
             }
+        }
+
+        private void DrawVariantDropZone(AvatarVariantSwitchConfig config)
+        {
+            var rect = GUILayoutUtility.GetRect(0, 40, GUILayout.ExpandWidth(true));
+            rect = new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
+
+            var boxStyle = new GUIStyle(EditorStyles.helpBox)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 11,
+                richText = true
+            };
+            GUI.Box(rect, "把衣服/装扮根物体拖到这里 → <b>自动创建装扮条目</b>（可一次拖多个）", boxStyle);
+
+            var evt = Event.current;
+            if (evt == null) return;
+            if (!rect.Contains(evt.mousePosition)) return;
+
+            switch (evt.type)
+            {
+                case EventType.DragUpdated:
+                    DragAndDrop.visualMode = HasValidDropTargets(config)
+                        ? DragAndDropVisualMode.Copy
+                        : DragAndDropVisualMode.Rejected;
+                    evt.Use();
+                    break;
+
+                case EventType.DragPerform:
+                    DragAndDrop.AcceptDrag();
+                    var added = 0;
+                    foreach (var obj in DragAndDrop.objectReferences)
+                    {
+                        if (!(obj is GameObject go)) continue;
+                        if (!IsValidDropTarget(go, config)) continue;
+                        if (AlreadyUsedAsRoot(go, config)) continue;
+                        AddVariantForRoot(config, go);
+                        added++;
+                    }
+                    if (added > 0)
+                    {
+                        EditorUtility.SetDirty(config);
+                        serializedObject.Update();
+                        Repaint();
+                    }
+                    evt.Use();
+                    break;
+            }
+        }
+
+        private static bool HasValidDropTargets(AvatarVariantSwitchConfig config)
+        {
+            foreach (var obj in DragAndDrop.objectReferences)
+            {
+                if (obj is GameObject go && IsValidDropTarget(go, config))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool IsValidDropTarget(GameObject go, AvatarVariantSwitchConfig config)
+        {
+            if (go == null || config == null) return false;
+            var root = config.AvatarRoot;
+            if (root == null) return false;
+            if (go == root) return false;
+            return go.transform.IsChildOf(root.transform);
+        }
+
+        private static bool AlreadyUsedAsRoot(GameObject go, AvatarVariantSwitchConfig config)
+        {
+            if (config.variants == null) return false;
+            foreach (var variant in config.variants)
+            {
+                if (variant == null || variant.includedRoots == null) continue;
+                foreach (var existing in variant.includedRoots)
+                {
+                    if (existing == go) return true;
+                }
+            }
+            return false;
+        }
+
+        private static void AddVariantForRoot(AvatarVariantSwitchConfig config, GameObject go)
+        {
+            config.variants ??= new List<AvatarVariantEntry>();
+            var entry = new AvatarVariantEntry
+            {
+                displayName = go.name,
+                variantKey = Guid.NewGuid().ToString("N"),
+                paramValue = FindNextFreeParamValue(config),
+                includedRoots = new List<GameObject> { go },
+                accessories = new List<AvatarVariantAccessory>(),
+                autoScannedRoots = new List<GameObject>()
+            };
+            config.variants.Add(entry);
+        }
+
+        private static int FindNextFreeParamValue(AvatarVariantSwitchConfig config)
+        {
+            var used = new HashSet<int>();
+            if (config.variants != null)
+            {
+                foreach (var variant in config.variants)
+                {
+                    if (variant != null) used.Add(variant.paramValue);
+                }
+            }
+            for (int i = 0; i < 1024; i++)
+            {
+                if (!used.Contains(i)) return i;
+            }
+            return 0;
         }
 
         private static void EnsureVariantKeys(AvatarVariantSwitchConfig config)
