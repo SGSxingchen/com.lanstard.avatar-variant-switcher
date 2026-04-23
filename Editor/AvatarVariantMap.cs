@@ -39,6 +39,15 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             }
 
             map.EnsureInitialized();
+            if (map.variants.Count == 0)
+            {
+                var legacyMap = JsonUtility.FromJson<LegacyAvatarVariantMapFile>(json);
+                if (legacyMap != null && legacyMap.entries != null && legacyMap.entries.Count > 0)
+                {
+                    map = ConvertLegacyMap(legacyMap);
+                }
+            }
+
             return map;
         }
 
@@ -83,7 +92,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             EnsureInitialized();
 
-            var existing = FindByKey(variantKey);
+            var existing = FindByKeyOrParam(variantKey, paramValue);
             if (existing == null)
             {
                 variants.Add(new AvatarVariantMapVariant
@@ -105,6 +114,18 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             EnsureInitialized();
             return variants.FirstOrDefault(variant => string.Equals(variant.variantKey, variantKey, StringComparison.Ordinal));
+        }
+
+        public AvatarVariantMapVariant FindByParamValue(int paramValue)
+        {
+            EnsureInitialized();
+            return variants.FirstOrDefault(variant => variant != null && variant.paramValue == paramValue);
+        }
+
+        public AvatarVariantMapVariant FindByKeyOrParam(string variantKey, int paramValue)
+        {
+            var existing = FindByKey(variantKey);
+            return existing ?? FindByParamValue(paramValue);
         }
 
         public void PruneKeysNotIn(ICollection<string> validKeys)
@@ -141,6 +162,37 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             {
                 variants = new List<AvatarVariantMapVariant>();
             }
+        }
+
+        private static AvatarVariantMap ConvertLegacyMap(LegacyAvatarVariantMapFile legacyMap)
+        {
+            var map = new AvatarVariantMap
+            {
+                schemaVersion = legacyMap.version > 0 ? legacyMap.version : 1,
+                generatedAtUtc = legacyMap.generatedAtUtc ?? string.Empty,
+                parameterName = legacyMap.parameterName ?? string.Empty,
+                menuName = legacyMap.menuName ?? string.Empty,
+                defaultValue = legacyMap.defaultValue,
+                variants = new List<AvatarVariantMapVariant>()
+            };
+
+            foreach (var legacyEntry in legacyMap.entries)
+            {
+                if (legacyEntry == null)
+                {
+                    continue;
+                }
+
+                map.variants.Add(new AvatarVariantMapVariant
+                {
+                    variantKey = string.Empty,
+                    paramValue = legacyEntry.value,
+                    displayName = legacyEntry.name ?? string.Empty,
+                    blueprintId = legacyEntry.blueprintId ?? string.Empty
+                });
+            }
+
+            return map;
         }
 
         private static string ResolvePath(string path)
@@ -182,6 +234,25 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         public string variantKey = string.Empty;
         public int paramValue;
         public string displayName = string.Empty;
+        public string blueprintId = string.Empty;
+    }
+
+    [Serializable]
+    internal class LegacyAvatarVariantMapFile
+    {
+        public int version;
+        public string generatedAtUtc = string.Empty;
+        public string parameterName = string.Empty;
+        public string menuName = string.Empty;
+        public int defaultValue;
+        public List<LegacyAvatarVariantMapEntry> entries = new List<LegacyAvatarVariantMapEntry>();
+    }
+
+    [Serializable]
+    internal class LegacyAvatarVariantMapEntry
+    {
+        public int value;
+        public string name = string.Empty;
         public string blueprintId = string.Empty;
     }
 }

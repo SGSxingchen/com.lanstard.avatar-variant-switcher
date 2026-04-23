@@ -55,13 +55,13 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
                 foreach (var variant in cfg.variants)
                 {
-                    var existing = map.FindByKey(variant.variantKey);
-                    if (existing == null || string.IsNullOrWhiteSpace(existing.blueprintId))
+                    var blueprintId = ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId);
+                    if (string.IsNullOrWhiteSpace(blueprintId))
                     {
                         continue;
                     }
 
-                    map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, existing.blueprintId);
+                    map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
                 }
 
                 AvatarVariantMap.WriteAtomic(cfg.outputMapPath, map);
@@ -274,7 +274,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     try
                     {
-                        ResolveThumbnailPath(variant.thumbnail, label);
+                        ResolveThumbnailPath(ResolveVariantThumbnail(cfg, variant), label);
                     }
                     catch (Exception ex)
                     {
@@ -350,8 +350,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
                     guard.ApplyActive(activeSet);
 
-                    var existing = map.FindByKey(variant.variantKey);
-                    guard.SetBlueprintId(existing != null ? existing.blueprintId : string.Empty);
+                    guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
 
                     EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
                     EditorSceneManager.SaveOpenScenes();
@@ -360,7 +359,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     {
                         ID = pm.blueprintId ?? string.Empty,
                         Name = ResolveUploadedName(plan, variant),
-                        Description = variant.uploadedDescription ?? string.Empty,
+                        Description = ResolveUploadedDescription(plan, variant),
                         Tags = new List<string>(),
                         ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
                     };
@@ -646,6 +645,16 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return fullPath;
         }
 
+        private static Texture2D ResolveVariantThumbnail(AvatarVariantSwitchConfig cfg, AvatarVariantEntry variant)
+        {
+            if (variant != null && variant.thumbnail != null)
+            {
+                return variant.thumbnail;
+            }
+
+            return cfg != null ? cfg.legacyThumbnail : null;
+        }
+
         private static string ResolveUploadedName(BatchPlan plan, BatchVariantPlan variant)
         {
             if (!string.IsNullOrWhiteSpace(variant.uploadedName))
@@ -660,6 +669,30 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             }
 
             return string.Format("{0} - {1}", plan.avatarRoot.name, variant.displayName);
+        }
+
+        private static string ResolveUploadedDescription(BatchPlan plan, BatchVariantPlan variant)
+        {
+            if (!string.IsNullOrWhiteSpace(variant.uploadedDescription))
+            {
+                return variant.uploadedDescription.Trim();
+            }
+
+            return plan.legacyUploadedAvatarDescription ?? string.Empty;
+        }
+
+        private static string ResolveExistingBlueprintId(AvatarVariantMap map, string variantKey, int paramValue, string legacyUploadedBlueprintId)
+        {
+            if (map != null)
+            {
+                var existing = map.FindByKeyOrParam(variantKey, paramValue);
+                if (existing != null && !string.IsNullOrWhiteSpace(existing.blueprintId))
+                {
+                    return existing.blueprintId;
+                }
+            }
+
+            return legacyUploadedBlueprintId ?? string.Empty;
         }
 
         private static string ResolveMenuName(AvatarVariantSwitchConfig cfg)
@@ -679,23 +712,35 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 return false;
             }
 
-            var menuRoot = FindMenuRoot(cfg.AvatarRoot.transform);
-            if (menuRoot == null)
+            foreach (var menuRoot in FindMenuRoots(cfg.AvatarRoot.transform))
             {
-                return false;
+                if (candidate.transform == menuRoot || candidate.transform.IsChildOf(menuRoot))
+                {
+                    return true;
+                }
             }
 
-            return candidate.transform == menuRoot || candidate.transform.IsChildOf(menuRoot);
+            return false;
         }
 
-        private static Transform FindMenuRoot(Transform avatarRoot)
+        private static IEnumerable<Transform> FindMenuRoots(Transform avatarRoot)
         {
             if (avatarRoot == null)
             {
-                return null;
+                yield break;
             }
 
-            return avatarRoot.Find(GeneratedMenuRootName);
+            var menuRoot = avatarRoot.Find(GeneratedMenuRootName);
+            if (menuRoot != null)
+            {
+                yield return menuRoot;
+            }
+
+            var legacyMenuRoot = avatarRoot.Find("_AvatarVariantMenu");
+            if (legacyMenuRoot != null)
+            {
+                yield return legacyMenuRoot;
+            }
         }
 
         private static string GetPackageRoot(string assetPath)
@@ -747,6 +792,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             public readonly ReleaseStatus releaseStatus;
             public readonly string outputMapPath;
             public readonly string uploadedAvatarNamePrefix;
+            public readonly string legacyUploadedAvatarDescription;
             public readonly List<BatchVariantPlan> variants;
 
             private BatchPlan(
@@ -757,6 +803,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 ReleaseStatus releaseStatus,
                 string outputMapPath,
                 string uploadedAvatarNamePrefix,
+                string legacyUploadedAvatarDescription,
                 List<BatchVariantPlan> variants)
             {
                 this.avatarRoot = avatarRoot;
@@ -766,6 +813,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 this.releaseStatus = releaseStatus;
                 this.outputMapPath = outputMapPath;
                 this.uploadedAvatarNamePrefix = uploadedAvatarNamePrefix;
+                this.legacyUploadedAvatarDescription = legacyUploadedAvatarDescription;
                 this.variants = variants;
             }
 
@@ -778,9 +826,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         variant.displayName ?? string.Empty,
                         variant.variantKey ?? string.Empty,
                         variant.paramValue,
-                        ResolveThumbnailPath(variant.thumbnail, GetVariantLabel(variant, variants.Count)),
+                        ResolveThumbnailPath(ResolveVariantThumbnail(cfg, variant), GetVariantLabel(variant, variants.Count)),
                         variant.uploadedName ?? string.Empty,
                         variant.uploadedDescription ?? string.Empty,
+                        variant.legacyUploadedBlueprintId ?? string.Empty,
                         new List<GameObject>(variant.includedRoots ?? new List<GameObject>())));
                 }
 
@@ -792,6 +841,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     cfg.releaseStatus,
                     cfg.outputMapPath,
                     cfg.uploadedAvatarNamePrefix ?? string.Empty,
+                    cfg.legacyUploadedAvatarDescription ?? string.Empty,
                     variants);
             }
         }
@@ -804,6 +854,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             public readonly string thumbnailPath;
             public readonly string uploadedName;
             public readonly string uploadedDescription;
+            public readonly string legacyUploadedBlueprintId;
             public readonly List<GameObject> includedRoots;
 
             public BatchVariantPlan(
@@ -813,6 +864,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 string thumbnailPath,
                 string uploadedName,
                 string uploadedDescription,
+                string legacyUploadedBlueprintId,
                 List<GameObject> includedRoots)
             {
                 this.displayName = displayName;
@@ -821,6 +873,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 this.thumbnailPath = thumbnailPath;
                 this.uploadedName = uploadedName;
                 this.uploadedDescription = uploadedDescription;
+                this.legacyUploadedBlueprintId = legacyUploadedBlueprintId;
                 this.includedRoots = includedRoots;
             }
         }

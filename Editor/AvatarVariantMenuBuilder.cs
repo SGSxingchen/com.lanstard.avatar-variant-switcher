@@ -10,14 +10,17 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
     public static class AvatarVariantMenuBuilder
     {
         private const string GeneratedMenuRootName = "_AvatarSwitcherMenu";
+        private const string LegacyGeneratedMenuRootName = "_AvatarVariantMenu";
 
         public static void Generate(AvatarVariantSwitchConfig cfg)
         {
             var avatarRoot = cfg.AvatarRoot;
+            RemoveLegacyRoot(avatarRoot.transform);
             var menuRoot = EnsureChild(avatarRoot.transform, GeneratedMenuRootName);
             ClearChildrenAndNonTransformComponents(menuRoot.gameObject);
 
-            Undo.AddComponent<ModularAvatarMenuInstaller>(menuRoot.gameObject);
+            var installer = Undo.AddComponent<ModularAvatarMenuInstaller>(menuRoot.gameObject);
+            installer.installTargetMenu = cfg.InstallTargetMenu;
 
             var parameters = Undo.AddComponent<ModularAvatarParameters>(menuRoot.gameObject);
             parameters.parameters = new List<ParameterConfig>
@@ -70,6 +73,22 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             EditorUtility.SetDirty(menuRoot.gameObject);
             EditorSceneManager.MarkSceneDirty(cfg.gameObject.scene);
             AssetDatabase.SaveAssets();
+        }
+
+        private static void RemoveLegacyRoot(Transform avatarRoot)
+        {
+            if (avatarRoot == null)
+            {
+                return;
+            }
+
+            var legacyRoot = avatarRoot.Find(LegacyGeneratedMenuRootName);
+            if (legacyRoot == null)
+            {
+                return;
+            }
+
+            Undo.DestroyObjectImmediate(legacyRoot.gameObject);
         }
 
         private static Transform EnsureChild(Transform parent, string childName)

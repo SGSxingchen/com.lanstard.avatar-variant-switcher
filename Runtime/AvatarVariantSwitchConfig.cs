@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 using VRC.SDK3.Avatars.Components;
+using VRC.SDK3.Avatars.ScriptableObjects;
 
 namespace Lanstard.AvatarVariantSwitcher
 {
@@ -14,9 +16,25 @@ namespace Lanstard.AvatarVariantSwitcher
         public string menuName = "Switch Variant";
         public int defaultValue;
         public ReleaseStatus releaseStatus = ReleaseStatus.Private;
+
+        [FormerlySerializedAs("mappingFilePath")]
         public string outputMapPath = "Assets/AvatarVariantSwitcher/Generated/avatar-switch-map.json";
+
         public string uploadedAvatarNamePrefix = string.Empty;
         public List<AvatarVariantEntry> variants = new List<AvatarVariantEntry>();
+
+        [HideInInspector]
+        [FormerlySerializedAs("installTargetMenu")]
+        public VRCExpressionsMenu legacyInstallTargetMenu;
+
+        [HideInInspector]
+        [FormerlySerializedAs("thumbnail")]
+        public Texture2D legacyThumbnail;
+
+        [HideInInspector]
+        [FormerlySerializedAs("uploadedAvatarDescription")]
+        [TextArea(2, 4)]
+        public string legacyUploadedAvatarDescription = string.Empty;
 
         [NonSerialized]
         public GameObject generatedMenuRoot;
@@ -24,6 +42,19 @@ namespace Lanstard.AvatarVariantSwitcher
         public GameObject AvatarRoot
         {
             get { return avatarDescriptor != null ? avatarDescriptor.gameObject : gameObject; }
+        }
+
+        public VRCExpressionsMenu InstallTargetMenu
+        {
+            get
+            {
+                if (legacyInstallTargetMenu != null)
+                {
+                    return legacyInstallTargetMenu;
+                }
+
+                return avatarDescriptor != null ? avatarDescriptor.expressionsMenu : null;
+            }
         }
 
         private void Reset()
