@@ -5,10 +5,14 @@ namespace AvatarVariantOscBridge;
 
 internal sealed class VariantBridge
 {
+    private const string ServiceBaseName = "AvatarVariantSwitcher";
+
     private readonly BridgeOptions _options;
     private readonly UdpClient _listener;
     private readonly UdpClient _sender;
-    private readonly IPEndPoint _targetEndpoint;
+    private readonly IPEndPoint? _legacyTargetEndpoint;
+    private readonly int _listenPort;
+    private readonly OscQueryService? _oscQuery;
 
     private readonly object _mapLock = new();
     private AvatarVariantMap _map;
@@ -29,9 +33,26 @@ internal sealed class VariantBridge
         _parameterAddress = BuildParameterAddress(_map.ParameterName);
         _byParamValue = BuildIndex(_map);
 
-        _listener = new UdpClient(new IPEndPoint(IPAddress.Any, options.ListenPort));
+        if (options.Legacy)
+        {
+            _listener = new UdpClient(new IPEndPoint(IPAddress.Any, options.ListenPort));
+            _listenPort = options.ListenPort;
+            _legacyTargetEndpoint = new IPEndPoint(IPAddress.Parse(options.Host), options.SendPort);
+        }
+        else
+        {
+            _listener = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
+            _listenPort = ((IPEndPoint)_listener.Client.LocalEndPoint!).Port;
+            _legacyTargetEndpoint = null;
+
+            _oscQuery = new OscQueryService(ServiceBaseName, _map.ParameterName, _listenPort);
+            _oscQuery.LogInfo += msg => Console.WriteLine($"[{Timestamp()}] {msg}");
+            _oscQuery.LogWarn += msg => Console.Error.WriteLine($"[{Timestamp()}] WARN: {msg}");
+            _oscQuery.VrchatDiscovered += ep => Console.WriteLine($"[{Timestamp()}] sending /avatar/change to {ep}");
+            _oscQuery.Start();
+        }
+
         _sender = new UdpClient();
-        _targetEndpoint = new IPEndPoint(IPAddress.Parse(options.Host), options.SendPort);
 
         TryCreateWatcher();
     }
@@ -67,6 +88,7 @@ internal sealed class VariantBridge
             _watcher?.Dispose();
             _listener.Dispose();
             _sender.Dispose();
+            _oscQuery?.Dispose();
         }
     }
 
@@ -116,10 +138,23 @@ internal sealed class VariantBridge
             return;
         }
 
+        var target = ResolveSendTarget();
+        if (target == null)
+        {
+            Console.WriteLine($"[{Timestamp()}] value={value} ({entry.DisplayName}): VRChat not yet discovered via OSCQuery, dropping switch.");
+            return;
+        }
+
         var packet = OscCodec.WriteMessage("/avatar/change", entry.BlueprintId);
-        _sender.Send(packet, packet.Length, _targetEndpoint);
+        _sender.Send(packet, packet.Length, target);
         _currentAvatarId = entry.BlueprintId;
         Console.WriteLine($"[{Timestamp()}] value={value} -> {entry.DisplayName} ({entry.BlueprintId})");
+    }
+
+    private IPEndPoint? ResolveSendTarget()
+    {
+        if (_options.Legacy) return _legacyTargetEndpoint;
+        return _oscQuery?.BroadcastTarget;
     }
 
     private static bool TryReadIntArg(OscMessage message, out int value)
@@ -164,12 +199,17 @@ internal sealed class VariantBridge
         try
         {
             var fresh = AvatarVariantMap.Load(_options.MappingPath);
+            string oldName;
+            string newName;
             lock (_mapLock)
             {
+                oldName = _map.ParameterName;
                 _map = fresh;
                 _parameterAddress = BuildParameterAddress(_map.ParameterName);
                 _byParamValue = BuildIndex(_map);
+                newName = _map.ParameterName;
             }
+            _oscQuery?.UpdateParameterName(oldName, newName);
             Console.WriteLine($"[{Timestamp()}] mapping reloaded ({_map.Variants.Count} variants, parameter={_map.ParameterName}).");
         }
         catch (Exception ex)
@@ -182,8 +222,19 @@ internal sealed class VariantBridge
     private void PrintStartupInfo()
     {
         Console.WriteLine($"Mapping:    {_options.MappingPath}");
-        Console.WriteLine($"Listening:  0.0.0.0:{_options.ListenPort}");
-        Console.WriteLine($"Sending to: {_options.Host}:{_options.SendPort}");
+        if (_options.Legacy)
+        {
+            Console.WriteLine($"Mode:       legacy (static ports)");
+            Console.WriteLine($"Listening:  0.0.0.0:{_listenPort}");
+            Console.WriteLine($"Sending to: {_legacyTargetEndpoint}");
+        }
+        else
+        {
+            Console.WriteLine($"Mode:       OSCQuery (mDNS auto-discovery)");
+            Console.WriteLine($"Listening:  0.0.0.0:{_listenPort} (OSC UDP, dynamic)");
+            Console.WriteLine($"Schema URL: http://127.0.0.1:{_oscQuery!.LocalHttpPort}/");
+            Console.WriteLine($"Sending to: (awaiting VRChat broadcast via mDNS)");
+        }
         Console.WriteLine($"Parameter:  {_map.ParameterName}  ({_map.Variants.Count} variants)");
         foreach (var v in _map.Variants)
         {
