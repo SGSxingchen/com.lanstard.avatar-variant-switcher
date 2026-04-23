@@ -115,6 +115,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     AvatarVariantSwitchWorkflow.WriteMap(config);
                 }
+
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("OSC 桥", EditorStyles.boldLabel);
+                var launchTooltip =
+                    "点击后：\n" +
+                    "1. 从 GitHub Release 检查并下载最新桥 exe 到 %LOCALAPPDATA%\\LanstardAvatarVariantBridge\\\n" +
+                    "2. 以当前映射文件路径为参数启动桥（一个 console 窗口）\n" +
+                    "断网时会用本地已缓存的版本。关闭 console 窗口 = 停止桥。";
+                if (GUILayout.Button(new GUIContent("启动 OSC 桥", launchTooltip)))
+                {
+                    AvatarVariantBridgeLauncher.DownloadAndLaunch(
+                        System.IO.Path.GetFullPath(config.outputMapPath));
+                }
             }
         }
 
