@@ -352,6 +352,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         v.displayName, v.variantKey, v.thumbnailAsset));
                 }
                 progressWindow = AvatarVariantUploadProgressWindow.ShowAndBegin(planItems);
+                using var sdkModalGuard = AvatarVariantSdkModalGuard.Start(progressWindow.Log);
 
                 var map = AvatarVariantMap.Read(plan.outputMapPath);
                 map.parameterName = plan.parameterName;
