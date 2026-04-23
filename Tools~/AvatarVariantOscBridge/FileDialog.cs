@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace AvatarVariantOscBridge;
 
@@ -8,35 +7,60 @@ namespace AvatarVariantOscBridge;
 /// </summary>
 internal static class FileDialog
 {
+    // 支持长路径（Windows 10+ 支持 32767 字符）；MAX_PATH=260 在今天太紧。
+    private const int BufferCharCount = 32 * 1024;
+
     public static string? PickMappingFile(string title, string? initialPath)
     {
-        var fileBuffer = new StringBuilder(260);
-        if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
+        // 手动分配非托管缓冲区：StringBuilder 不允许作为 P/Invoke struct 字段。
+        var bufferBytes = BufferCharCount * sizeof(char);
+        var buffer = Marshal.AllocHGlobal(bufferBytes);
+        try
         {
-            fileBuffer.Append(initialPath);
+            // 以空字符串起始
+            Marshal.WriteInt16(buffer, 0, 0);
+
+            if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
+            {
+                var chars = initialPath!.ToCharArray();
+                var copyLen = Math.Min(chars.Length, BufferCharCount - 1);
+                for (int i = 0; i < copyLen; i++)
+                    Marshal.WriteInt16(buffer, i * sizeof(char), chars[i]);
+                Marshal.WriteInt16(buffer, copyLen * sizeof(char), 0);
+            }
+
+            // 过滤器格式："显示文本\0通配\0显示文本\0通配\0\0"
+            var filter = "Avatar Variant Map (*.json)\0*.json\0All files (*.*)\0*.*\0\0";
+
+            var ofn = new OpenFileName
+            {
+                lStructSize = Marshal.SizeOf<OpenFileName>(),
+                hwndOwner = IntPtr.Zero,
+                lpstrFilter = filter,
+                lpstrFile = buffer,
+                nMaxFile = BufferCharCount,
+                lpstrTitle = title,
+                Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR
+            };
+
+            if (!GetOpenFileNameW(ref ofn))
+            {
+                // 0 表示用户取消；非 0 表示真的出错了（CDERR_* 或 FNERR_*）。
+                var err = CommDlgExtendedError();
+                if (err != 0)
+                {
+                    Console.Error.WriteLine($"WARN: file dialog failed (code 0x{err:X}).");
+                }
+                return null;
+            }
+
+            var result = Marshal.PtrToStringUni(buffer);
+            return string.IsNullOrWhiteSpace(result) ? null : result;
         }
-
-        // 过滤器格式："显示文本\0通配\0显示文本\0通配\0\0"
-        var filter = "Avatar Variant Map (*.json)\0*.json\0All files (*.*)\0*.*\0\0";
-
-        var ofn = new OpenFileName
+        finally
         {
-            lStructSize = Marshal.SizeOf<OpenFileName>(),
-            hwndOwner = IntPtr.Zero,
-            lpstrFilter = filter,
-            lpstrFile = fileBuffer,
-            nMaxFile = fileBuffer.Capacity,
-            lpstrTitle = title,
-            Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR
-        };
-
-        if (!GetOpenFileNameW(ref ofn))
-        {
-            return null; // 用户取消或对话框打开失败
+            Marshal.FreeHGlobal(buffer);
         }
-
-        var result = fileBuffer.ToString();
-        return string.IsNullOrWhiteSpace(result) ? null : result;
     }
 
     private const int OFN_FILEMUSTEXIST = 0x00001000;
@@ -54,7 +78,7 @@ internal static class FileDialog
         [MarshalAs(UnmanagedType.LPWStr)] public string? lpstrCustomFilter;
         public int    nMaxCustFilter;
         public int    nFilterIndex;
-        public StringBuilder lpstrFile;
+        public IntPtr lpstrFile;
         public int    nMaxFile;
         [MarshalAs(UnmanagedType.LPWStr)] public string? lpstrFileTitle;
         public int    nMaxFileTitle;
@@ -75,4 +99,7 @@ internal static class FileDialog
     [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetOpenFileNameW(ref OpenFileName ofn);
+
+    [DllImport("comdlg32.dll")]
+    private static extern int CommDlgExtendedError();
 }
