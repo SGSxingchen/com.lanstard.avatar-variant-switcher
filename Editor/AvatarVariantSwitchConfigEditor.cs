@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEditorInternal;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace Lanstard.AvatarVariantSwitcher.Editor
@@ -133,18 +134,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 case EventType.DragPerform:
                     DragAndDrop.AcceptDrag();
                     var added = 0;
+                    var undoRecorded = false;
                     foreach (var obj in DragAndDrop.objectReferences)
                     {
                         if (!(obj is GameObject go)) continue;
-                        if (!IsValidDropTarget(go, config)) continue;
-                        if (AlreadyUsedAsRoot(go, config)) continue;
+                        if (!CanCreateVariantForRoot(go, config)) continue;
+                        RecordConfigUndo(config, "Create variant", ref undoRecorded);
                         AddVariantForRoot(config, go);
                         added++;
                     }
                     if (added > 0)
                     {
-                        EditorUtility.SetDirty(config);
-                        serializedObject.Update();
+                        MarkConfigDirty(config);
+                        serializedObject.UpdateIfRequiredOrScript();
                         Repaint();
                     }
                     evt.Use();
@@ -156,12 +158,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
         {
             foreach (var obj in DragAndDrop.objectReferences)
             {
-                if (obj is GameObject go && IsValidDropTarget(go, config))
+                if (obj is GameObject go && CanCreateVariantForRoot(go, config))
                 {
                     return true;
                 }
             }
             return false;
+        }
+
+        private static bool CanCreateVariantForRoot(GameObject go, AvatarVariantSwitchConfig config)
+        {
+            if (!IsValidDropTarget(go, config)) return false;
+            if (IsUnderReservedMenuRoot(go, config)) return false;
+            return !ConflictsWithExistingRoots(go, config);
         }
 
         private static bool IsValidDropTarget(GameObject go, AvatarVariantSwitchConfig config)
@@ -173,7 +182,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return go.transform.IsChildOf(root.transform);
         }
 
-        private static bool AlreadyUsedAsRoot(GameObject go, AvatarVariantSwitchConfig config)
+        private static bool ConflictsWithExistingRoots(GameObject go, AvatarVariantSwitchConfig config)
         {
             if (config.variants == null) return false;
             foreach (var variant in config.variants)
@@ -181,10 +190,32 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 if (variant == null || variant.includedRoots == null) continue;
                 foreach (var existing in variant.includedRoots)
                 {
+                    if (existing == null) continue;
                     if (existing == go) return true;
+                    if (go.transform.IsChildOf(existing.transform) || existing.transform.IsChildOf(go.transform))
+                    {
+                        return true;
+                    }
                 }
             }
             return false;
+        }
+
+        private static bool IsUnderReservedMenuRoot(GameObject candidate, AvatarVariantSwitchConfig config)
+        {
+            if (candidate == null || config == null || config.AvatarRoot == null) return false;
+            var candidateTransform = candidate.transform;
+            var avatarRoot = config.AvatarRoot.transform;
+            return IsUnderNamedRoot(candidateTransform, avatarRoot, AvatarVariantMenuBuilder.GeneratedMenuRootName)
+                || IsUnderNamedRoot(candidateTransform, avatarRoot, "_AvatarVariantMenu");
+        }
+
+        private static bool IsUnderNamedRoot(Transform candidate, Transform avatarRoot, string rootName)
+        {
+            if (candidate == null || avatarRoot == null || string.IsNullOrWhiteSpace(rootName)) return false;
+            var menuRoot = avatarRoot.Find(rootName);
+            if (menuRoot == null) return false;
+            return candidate == menuRoot || candidate.IsChildOf(menuRoot);
         }
 
         private static void AddVariantForRoot(AvatarVariantSwitchConfig config, GameObject go)
@@ -219,6 +250,23 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return 0;
         }
 
+        private static void RecordConfigUndo(AvatarVariantSwitchConfig config, string actionName, ref bool undoRecorded)
+        {
+            if (undoRecorded || config == null) return;
+            Undo.RecordObject(config, actionName);
+            undoRecorded = true;
+        }
+
+        private static void MarkConfigDirty(AvatarVariantSwitchConfig config)
+        {
+            if (config == null) return;
+            EditorUtility.SetDirty(config);
+            if (config.gameObject != null && config.gameObject.scene.IsValid())
+            {
+                EditorSceneManager.MarkSceneDirty(config.gameObject.scene);
+            }
+        }
+
         private static void EnsureVariantKeys(AvatarVariantSwitchConfig config)
         {
             if (config == null || config.variants == null) return;
@@ -233,7 +281,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 changed = true;
             }
 
-            if (changed) EditorUtility.SetDirty(config);
+            if (changed) MarkConfigDirty(config);
         }
 
         // 每次 Inspector 刷新时比较每个装扮的 includedRoots 与 autoScannedRoots:
@@ -245,18 +293,40 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             if (config == null || config.variants == null) return;
 
             var changed = false;
+            var undoRecorded = false;
             foreach (var entry in config.variants)
             {
                 if (entry == null) continue;
-                entry.includedRoots ??= new List<GameObject>();
-                entry.accessories ??= new List<AvatarVariantAccessory>();
-                entry.autoScannedRoots ??= new List<GameObject>();
+
+                if (entry.includedRoots == null)
+                {
+                    RecordConfigUndo(config, "Auto-populate accessories", ref undoRecorded);
+                    entry.includedRoots = new List<GameObject>();
+                    changed = true;
+                }
+
+                if (entry.accessories == null)
+                {
+                    RecordConfigUndo(config, "Auto-populate accessories", ref undoRecorded);
+                    entry.accessories = new List<AvatarVariantAccessory>();
+                    changed = true;
+                }
+
+                if (entry.autoScannedRoots == null)
+                {
+                    RecordConfigUndo(config, "Auto-populate accessories", ref undoRecorded);
+                    entry.autoScannedRoots = new List<GameObject>();
+                    changed = true;
+                }
 
                 // 剔除 autoScannedRoots 里已经不在 includedRoots 里的条目（被用户删掉的 root）
                 var includedSet = new HashSet<GameObject>(entry.includedRoots.Where(r => r != null));
-                var beforeCount = entry.autoScannedRoots.Count;
-                entry.autoScannedRoots.RemoveAll(r => r == null || !includedSet.Contains(r));
-                if (entry.autoScannedRoots.Count != beforeCount) changed = true;
+                if (entry.autoScannedRoots.Any(r => r == null || !includedSet.Contains(r)))
+                {
+                    RecordConfigUndo(config, "Auto-populate accessories", ref undoRecorded);
+                    entry.autoScannedRoots.RemoveAll(r => r == null || !includedSet.Contains(r));
+                    changed = true;
+                }
 
                 // 找出新加入还没扫过的 root，扫它们的直接子物体
                 var scannedSet = new HashSet<GameObject>(entry.autoScannedRoots.Where(r => r != null));
@@ -271,6 +341,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     if (root == null) continue;
                     if (scannedSet.Contains(root)) continue;
 
+                    RecordConfigUndo(config, "Auto-populate accessories", ref undoRecorded);
                     for (int ci = 0; ci < root.transform.childCount; ci++)
                     {
                         var child = root.transform.GetChild(ci).gameObject;
@@ -292,7 +363,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 }
             }
 
-            if (changed) EditorUtility.SetDirty(config);
+            if (changed) MarkConfigDirty(config);
         }
 
         private void DrawValidation(AvatarVariantSwitchWorkflow.ValidationReport report)
@@ -434,7 +505,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             rect.y += ScanButtonHeight + EditorGUIUtility.standardVerticalSpacing;
         }
 
-        private void ScanAccessoriesForEntry(int entryIndex)
+        private void ScanAccessoriesForEntryLegacy(int entryIndex)
         {
             var config = (AvatarVariantSwitchConfig)target;
             if (config == null || config.variants == null) return;
@@ -443,7 +514,13 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             var entry = config.variants[entryIndex];
             if (entry == null || entry.includedRoots == null) return;
 
-            entry.accessories ??= new List<AvatarVariantAccessory>();
+            var undoRecorded = false;
+            if (entry.accessories == null)
+            {
+                RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
+                entry.accessories = new List<AvatarVariantAccessory>();
+            }
+
             var existingTargets = new HashSet<GameObject>();
             foreach (var acc in entry.accessories)
             {
@@ -459,6 +536,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     var child = root.transform.GetChild(ci).gameObject;
                     if (child == null) continue;
                     if (existingTargets.Contains(child)) continue;
+                    RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
                     entry.accessories.Add(new AvatarVariantAccessory
                     {
                         target = child,
@@ -472,13 +550,71 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             if (added > 0)
             {
-                EditorUtility.SetDirty(config);
-                serializedObject.Update();
+                MarkConfigDirty(config);
+                serializedObject.UpdateIfRequiredOrScript();
+                Repaint();
             }
             else
             {
                 EditorUtility.DisplayDialog("Avatar 装扮切换器", "没有发现新的子物体可以加入配件列表。", "确定");
             }
+        }
+
+        private void ScanAccessoriesForEntry(int entryIndex)
+        {
+            var config = (AvatarVariantSwitchConfig)target;
+            if (config == null || config.variants == null) return;
+            if (entryIndex < 0 || entryIndex >= config.variants.Count) return;
+
+            var entry = config.variants[entryIndex];
+            if (entry == null || entry.includedRoots == null) return;
+
+            var undoRecorded = false;
+            if (entry.accessories == null)
+            {
+                RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
+                entry.accessories = new List<AvatarVariantAccessory>();
+            }
+
+            var existingTargets = new HashSet<GameObject>();
+            foreach (var acc in entry.accessories)
+            {
+                if (acc != null && acc.target != null) existingTargets.Add(acc.target);
+            }
+
+            var added = 0;
+            foreach (var root in entry.includedRoots)
+            {
+                if (root == null) continue;
+                for (int ci = 0; ci < root.transform.childCount; ci++)
+                {
+                    var child = root.transform.GetChild(ci).gameObject;
+                    if (child == null) continue;
+                    if (existingTargets.Contains(child)) continue;
+                    RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
+                    entry.accessories.Add(new AvatarVariantAccessory
+                    {
+                        target = child,
+                        displayName = child.name,
+                        defaultOn = true
+                    });
+                    existingTargets.Add(child);
+                    added++;
+                }
+            }
+
+            if (added > 0)
+            {
+                MarkConfigDirty(config);
+                serializedObject.UpdateIfRequiredOrScript();
+                Repaint();
+                return;
+            }
+
+            EditorUtility.DisplayDialog(
+                "Avatar Variant Switcher",
+                "No new direct child objects were found to add to the accessory list.",
+                "OK");
         }
 
         private readonly struct FieldLabel

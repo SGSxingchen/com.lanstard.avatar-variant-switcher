@@ -287,6 +287,11 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                             report.Errors.Add(string.Format("装扮 {0} 的配件 {1} 不属于当前 Avatar Root。", label, acc.target.name));
                             continue;
                         }
+                        if (!IsAccessoryOwnedByVariant(acc.target, variant))
+                        {
+                            report.Errors.Add("\u914d\u4ef6\u76ee\u6807\u5fc5\u987b\u4f4d\u4e8e\u5f53\u524d\u88c5\u626e\u7684 includedRoots \u4e4b\u4e0b\uff1a" + acc.target.name);
+                            continue;
+                        }
                         if (IsUnderMenuRoot(acc.target, cfg))
                         {
                             report.Errors.Add(string.Format("装扮 {0} 的配件不能指向 _AvatarSwitcherMenu 里的对象：{1}。", label, acc.target.name));
@@ -319,6 +324,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             ValidateControlledRoots(controlledRoots, report);
             ValidateParameterConflicts(cfg, parameterName, report);
+            ValidateParameterBudget(cfg, report);
             ValidateOutputPath(cfg.outputMapPath, report);
             ValidateMenuCapacity(avatarDescriptor, report);
             PopulateStaleMapInfo(cfg, report);
@@ -367,6 +373,12 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     if (!controlledRoots.Contains(accGo)) controlledRoots.Add(accGo);
                 }
 
+                var accessoriesMenuRoot = AvatarVariantMenuBuilder.FindAccessoriesMenuRoot(cfg);
+                if (accessoriesMenuRoot != null && !controlledRoots.Contains(accessoriesMenuRoot.gameObject))
+                {
+                    controlledRoots.Add(accessoriesMenuRoot.gameObject);
+                }
+
                 guard = AvatarVariantTagGuard.Capture(pm, controlledRoots);
 
                 var builder = await AvatarVariantBuilderGate.AcquireAsync(cts.Token);
@@ -388,9 +400,20 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     cts.Token.ThrowIfCancellationRequested();
 
                     var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
+                    var hasActiveAccessoryMenuItems = false;
                     foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
                     {
-                        if (accGo != null) activeSet.Add(accGo);
+                        if (accGo == null)
+                        {
+                            continue;
+                        }
+
+                        activeSet.Add(accGo);
+                        hasActiveAccessoryMenuItems = true;
+                    }
+                    if (hasActiveAccessoryMenuItems && accessoriesMenuRoot != null)
+                    {
+                        activeSet.Add(accessoriesMenuRoot.gameObject);
                     }
                     guard.ApplyActive(activeSet);
 
@@ -526,6 +549,154 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         report.Errors.Add(string.Format("受控对象不能出现父子重叠：{0} / {1}。", a.name, b.name));
                     }
                 }
+            }
+        }
+
+        private static bool IsAccessoryOwnedByVariant(GameObject accessoryTarget, AvatarVariantEntry variant)
+        {
+            if (accessoryTarget == null || variant == null || variant.includedRoots == null)
+            {
+                return false;
+            }
+
+            foreach (var root in variant.includedRoots)
+            {
+                if (root == null)
+                {
+                    continue;
+                }
+
+                if (accessoryTarget == root || accessoryTarget.transform.IsChildOf(root.transform))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void ValidateParameterBudget(AvatarVariantSwitchConfig cfg, ValidationReport report)
+        {
+            if (cfg == null || cfg.avatarDescriptor == null || cfg.AvatarRoot == null)
+            {
+                return;
+            }
+
+            var mergedParameters = new Dictionary<string, VRCExpressionParameters.Parameter>(StringComparer.Ordinal);
+
+            var expressionParameters = cfg.avatarDescriptor.expressionParameters;
+            if (expressionParameters != null && expressionParameters.parameters != null)
+            {
+                foreach (var parameter in expressionParameters.parameters)
+                {
+                    if (parameter == null || string.IsNullOrWhiteSpace(parameter.name))
+                    {
+                        continue;
+                    }
+
+                    mergedParameters[parameter.name] = CloneExpressionParameter(parameter);
+                }
+            }
+
+            var allParameters = cfg.AvatarRoot.GetComponentsInChildren<ModularAvatarParameters>(true);
+            foreach (var parameterComponent in allParameters)
+            {
+                if (parameterComponent == null || IsUnderMenuRoot(parameterComponent.gameObject, cfg) || parameterComponent.parameters == null)
+                {
+                    continue;
+                }
+
+                foreach (var parameter in parameterComponent.parameters)
+                {
+                    if (!TryConvertParameterConfig(parameter, out var converted))
+                    {
+                        continue;
+                    }
+
+                    mergedParameters[converted.name] = converted;
+                }
+            }
+
+            foreach (var parameter in AvatarVariantMenuBuilder.BuildAllParameters(cfg))
+            {
+                if (!TryConvertParameterConfig(parameter, out var converted))
+                {
+                    continue;
+                }
+
+                mergedParameters[converted.name] = converted;
+            }
+
+            var temp = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+            try
+            {
+                temp.parameters = mergedParameters.Values.ToArray();
+                var totalCost = temp.CalcTotalCost();
+                if (totalCost > VRCExpressionParameters.MAX_PARAMETER_COST)
+                {
+                    report.Errors.Add(string.Format(
+                        "\u53c2\u6570\u9884\u7b97\u8d85\u51fa\u4e0a\u9650\uff1a{0}/{1} Synced Bits\u3002\u5982\u679c accessory \u8fc7\u591a\uff0c\u8bf7\u51cf\u5c11\u914d\u4ef6 toggle \u6570\u91cf\uff0c\u6216\u6539\u6210 local-only \u53c2\u6570\u3002",
+                        totalCost,
+                        VRCExpressionParameters.MAX_PARAMETER_COST));
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(temp);
+            }
+        }
+
+        private static VRCExpressionParameters.Parameter CloneExpressionParameter(VRCExpressionParameters.Parameter parameter)
+        {
+            return new VRCExpressionParameters.Parameter
+            {
+                name = parameter.name,
+                valueType = parameter.valueType,
+                saved = parameter.saved,
+                defaultValue = parameter.defaultValue,
+                networkSynced = parameter.networkSynced
+            };
+        }
+
+        private static bool TryConvertParameterConfig(ParameterConfig parameterConfig, out VRCExpressionParameters.Parameter converted)
+        {
+            converted = null;
+
+            if (parameterConfig.internalParameter || parameterConfig.isPrefix || parameterConfig.syncType == ParameterSyncType.NotSynced)
+            {
+                return false;
+            }
+
+            var resolvedName = !string.IsNullOrWhiteSpace(parameterConfig.remapTo)
+                ? parameterConfig.remapTo.Trim()
+                : (parameterConfig.nameOrPrefix ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(resolvedName))
+            {
+                return false;
+            }
+
+            converted = new VRCExpressionParameters.Parameter
+            {
+                name = resolvedName,
+                saved = parameterConfig.saved,
+                defaultValue = parameterConfig.defaultValue,
+                networkSynced = !parameterConfig.localOnly
+            };
+
+            switch (parameterConfig.syncType)
+            {
+                case ParameterSyncType.Bool:
+                    converted.valueType = VRCExpressionParameters.ValueType.Bool;
+                    return true;
+                case ParameterSyncType.Float:
+                    converted.valueType = VRCExpressionParameters.ValueType.Float;
+                    return true;
+                case ParameterSyncType.Int:
+                    converted.valueType = VRCExpressionParameters.ValueType.Int;
+                    return true;
+                default:
+                    return false;
             }
         }
 
