@@ -45,16 +45,19 @@ namespace Lanstard.AvatarVariantSwitcher
             get { return avatarDescriptor != null ? avatarDescriptor.gameObject : gameObject; }
         }
 
+        // null 表示装到 avatar 根 expressions menu。
+        // 不要直接返回 avatarDescriptor.expressionsMenu —— MA 的 VirtualMenu 不会把根菜单加进
+        // _visitedMenus，把 installer.installTargetMenu 显式指向根菜单会被判成"不属于此 Avatar"。
         public VRCExpressionsMenu InstallTargetMenu
         {
             get
             {
-                if (legacyInstallTargetMenu != null)
+                if (legacyInstallTargetMenu == null) return null;
+                if (avatarDescriptor != null && legacyInstallTargetMenu == avatarDescriptor.expressionsMenu)
                 {
-                    return legacyInstallTargetMenu;
+                    return null;
                 }
-
-                return avatarDescriptor != null ? avatarDescriptor.expressionsMenu : null;
+                return legacyInstallTargetMenu;
             }
         }
 

@@ -84,7 +84,7 @@ Inspector 的校验会拒绝任何 `_AvatarSwitcherMenu/` 下的 `includedRoots`
 
 [AvatarVariantMenuBuilder.Generate](Editor/AvatarVariantMenuBuilder.cs) 在 avatar root 下生成 `_AvatarSwitcherMenu`，挂：
 
-- 一个 `ModularAvatarMenuInstaller` → 装到 `cfg.InstallTargetMenu`（为空时回落到 `VRCAvatarDescriptor.expressionsMenu`）。
+- 一个 `ModularAvatarMenuInstaller` → 装到 `cfg.InstallTargetMenu`。该 getter 在用户没指定子菜单（或显式指向了根 expressions menu）时返回 null，**MA 约定 `installTargetMenu == null` 才表示装到根菜单**——绝对不能把它显式赋成 avatar 的根 expressions menu，否则 MA 的 `VirtualMenu` 不会把根菜单加进 `_visitedMenus`，inspector 会报"选择的菜单不属于此 Avatar"。
 - 一个 `ModularAvatarParameters` 声明**所有**同步参数（主 int + 所有装扮所有配件的 bool）。
 - 一个 "Switch Variant" SubMenu，每个装扮一个 Button。
 - 可选的 `_AccessoriesMenu` SubMenu，把所有装扮的配件 toggle 平铺放一起。**按装扮隔离是靠 tag 做的，不是靠父子关系**——所有配件 GameObject 都是 `_AccessoriesMenu` 的平级子物体，命名用 `Acc_<variantKeyPrefix>_<idx>_<label>` 约定（[BuildAccessoryGameObjectName](Editor/AvatarVariantMenuBuilder.cs)）。这种命名让批处理工人可以不动层级就按装扮过滤配件菜单项。
