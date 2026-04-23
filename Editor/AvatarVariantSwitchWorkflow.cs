@@ -439,7 +439,19 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                             ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
                         };
 
-                        await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
+                        try
+                        {
+                            await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
+                        }
+                        catch (Exception ex) when (!string.IsNullOrWhiteSpace(record.ID) && IsThumbnailAlreadyUploadedError(ex))
+                        {
+                            // VRChat 的文件服务对用户账户做 MD5 去重：重传一张和服务器上已有的缩略图内容
+                            // 完全一致的 PNG，SDK 会抛 UploadException("This file was already uploaded")。
+                            // 这种情况下 bundle 已经更新成功，缩略图保持原样即是正确结果，按成功继续。
+                            Debug.LogWarning(string.Format(
+                                "[AvatarVariantSwitcher] 装扮 \"{0}\" 的缩略图与 VRChat 上已有的完全相同（MD5 重复），SDK 抛出 \"already uploaded\"。Bundle 已更新，缩略图保持原样，按成功继续。",
+                                variant.displayName));
+                        }
 
                         var blueprintId = pm.blueprintId ?? string.Empty;
                         if (string.IsNullOrWhiteSpace(blueprintId))
@@ -939,6 +951,34 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             }
 
             return legacyUploadedBlueprintId ?? string.Empty;
+        }
+
+        private static bool IsThumbnailAlreadyUploadedError(Exception ex)
+        {
+            if (ex == null)
+            {
+                return false;
+            }
+
+            var hasMessage = false;
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                var msg = e.Message ?? string.Empty;
+                if (msg.IndexOf("already uploaded", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    hasMessage = true;
+                    break;
+                }
+            }
+            if (!hasMessage)
+            {
+                return false;
+            }
+
+            // 用 ToString() 把异常链里所有 stack 拼起来检查；只接受确实从 UpdateAvatarImage
+            // 这条路径上来的 "already uploaded"，避免误吞 bundle 上传的同名错误。
+            var fullStack = ex.ToString() ?? string.Empty;
+            return fullStack.IndexOf("UpdateAvatarImage", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string ResolveMenuName(AvatarVariantSwitchConfig cfg)
