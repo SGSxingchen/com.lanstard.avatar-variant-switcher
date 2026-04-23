@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
 namespace AvatarVariantOscBridge;
@@ -46,12 +47,17 @@ internal sealed class MDnsResponder : IDisposable
     private readonly Dictionary<string, DiscoveryState> _discoveryCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IPAddress> _hostCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _stateLock = new();
+    private readonly object _sendLock = new();
 
     private Socket? _socket;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private Task? _maintenanceTask;
     private bool _started;
+    // IPv4 addresses of every interface we joined multicast on; also used as the
+    // per-packet outgoing interface list so announcements/queries fan out to all
+    // physical and virtual NICs instead of just Windows' default-route NIC.
+    private IReadOnlyList<IPAddress> _multicastInterfaces = Array.Empty<IPAddress>();
 
     public void RegisterService(MDnsServiceAdvertisement ad)
     {
@@ -73,11 +79,21 @@ internal sealed class MDnsResponder : IDisposable
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         socket.Bind(new IPEndPoint(IPAddress.Any, 5353));
-        socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
-            new MulticastOption(MulticastEndpoint.Address, IPAddress.Any));
         socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, true);
         socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 255);
         _socket = socket;
+
+        // AddMembership(IPAddress.Any) on Windows only joins one NIC (picked by the
+        // routing table). On a multi-homed machine — Hyper-V, WSL, Meta Quest Link,
+        // VirtualBox, VPNs all create extra NICs — that's often a 169.254.x.x APIPA
+        // or virtual adapter, and we miss VRChat's announcements on the real LAN.
+        // Join every Up IPv4 NIC explicitly and remember them for per-send fanout.
+        _multicastInterfaces = JoinMulticastOnAllInterfaces(socket);
+        if (_multicastInterfaces.Count == 0)
+            LogWarn?.Invoke("mDNS: no multicast-capable IPv4 interfaces found; discovery will not work.");
+        else
+            LogInfo?.Invoke($"mDNS joined multicast on {_multicastInterfaces.Count} interface(s): " +
+                string.Join(", ", _multicastInterfaces));
 
         _cts = new CancellationTokenSource();
         _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
@@ -86,6 +102,38 @@ internal sealed class MDnsResponder : IDisposable
         // Initial announce + browse queries.
         AnnounceSelf();
         SendBrowseQueries();
+    }
+
+    private List<IPAddress> JoinMulticastOnAllInterfaces(Socket socket)
+    {
+        var joined = new List<IPAddress>();
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+            if (!ni.SupportsMulticast) continue;
+
+            IPInterfaceProperties props;
+            try { props = ni.GetIPProperties(); }
+            catch { continue; }
+
+            foreach (var uni in props.UnicastAddresses)
+            {
+                if (uni.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                try
+                {
+                    socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
+                        new MulticastOption(MulticastEndpoint.Address, uni.Address));
+                    joined.Add(uni.Address);
+                }
+                catch (SocketException ex)
+                {
+                    LogWarn?.Invoke($"mDNS AddMembership on {ni.Name} ({uni.Address}) failed: {ex.Message}");
+                }
+                break; // one IPv4 address per NIC is enough
+            }
+        }
+        return joined;
     }
 
     private async Task ReceiveLoopAsync(CancellationToken ct)
@@ -328,14 +376,43 @@ internal sealed class MDnsResponder : IDisposable
 
     private void SendPacket(DnsPacket pkt)
     {
-        try
-        {
-            var bytes = pkt.Serialize();
-            _socket?.SendTo(bytes, SocketFlags.None, MulticastEndpoint);
-        }
+        var socket = _socket;
+        if (socket == null) return;
+
+        byte[] bytes;
+        try { bytes = pkt.Serialize(); }
         catch (Exception ex)
         {
-            LogWarn?.Invoke($"mDNS send error: {ex.Message}");
+            LogWarn?.Invoke($"mDNS serialize error: {ex.Message}");
+            return;
+        }
+
+        var interfaces = _multicastInterfaces;
+        if (interfaces.Count == 0)
+        {
+            // No enumerated NICs (shouldn't happen after Start()); let the OS pick.
+            try { socket.SendTo(bytes, SocketFlags.None, MulticastEndpoint); }
+            catch (Exception ex) { LogWarn?.Invoke($"mDNS send error: {ex.Message}"); }
+            return;
+        }
+
+        // Outgoing interface is a socket-level knob, so serialize the send to avoid
+        // one thread's SetSocketOption racing another thread's SendTo.
+        lock (_sendLock)
+        {
+            foreach (var ifaddr in interfaces)
+            {
+                try
+                {
+                    socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface,
+                        ifaddr.GetAddressBytes());
+                    socket.SendTo(bytes, SocketFlags.None, MulticastEndpoint);
+                }
+                catch (Exception ex)
+                {
+                    LogWarn?.Invoke($"mDNS send via {ifaddr} failed: {ex.Message}");
+                }
+            }
         }
     }
 
