@@ -402,54 +402,64 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     var variant = plan.variants[index];
                     progressWindow.MarkBegin(index);
 
+                    var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
+                    var hasActiveAccessoryMenuItems = false;
+                    foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
+                    {
+                        if (accGo == null)
+                        {
+                            continue;
+                        }
+
+                        activeSet.Add(accGo);
+                        hasActiveAccessoryMenuItems = true;
+                    }
+                    if (hasActiveAccessoryMenuItems && accessoriesMenuRoot != null)
+                    {
+                        activeSet.Add(accessoriesMenuRoot.gameObject);
+                    }
+                    guard.ApplyActive(activeSet);
+
+                    guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
+
+                    EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
+                    EditorSceneManager.SaveOpenScenes();
+
+                    var record = new VRCAvatar
+                    {
+                        ID = pm.blueprintId ?? string.Empty,
+                        Name = ResolveUploadedName(plan, variant),
+                        Description = ResolveUploadedDescription(plan, variant),
+                        Tags = new List<string>(),
+                        ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
+                    };
+
                     try
                     {
-                        var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
-                        var hasActiveAccessoryMenuItems = false;
-                        foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
-                        {
-                            if (accGo == null)
-                            {
-                                continue;
-                            }
+                        await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
+                    }
+                    catch (Exception ex) when (!string.IsNullOrWhiteSpace(record.ID) && IsThumbnailAlreadyUploadedError(ex))
+                    {
+                        // VRChat 的文件服务对用户账户做 MD5 去重：重传一张和服务器上已有的缩略图内容
+                        // 完全一致的 PNG，SDK 会抛 UploadException("This file was already uploaded")。
+                        // 这种情况下 bundle 已经更新成功，缩略图保持原样即是正确结果，按成功继续。
+                        Debug.LogWarning(string.Format(
+                            "[AvatarVariantSwitcher] 装扮 \"{0}\" 的缩略图与 VRChat 上已有的完全相同（MD5 重复），SDK 抛出 \"already uploaded\"。Bundle 已更新，缩略图保持原样，按成功继续。",
+                            variant.displayName));
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        var shortMsg = ClassifyErrorForUser(ex);
+                        progressWindow.MarkFailure(index, shortMsg);
+                        return new FailureRecord(index, variant.displayName, shortMsg);
+                    }
 
-                            activeSet.Add(accGo);
-                            hasActiveAccessoryMenuItems = true;
-                        }
-                        if (hasActiveAccessoryMenuItems && accessoriesMenuRoot != null)
-                        {
-                            activeSet.Add(accessoriesMenuRoot.gameObject);
-                        }
-                        guard.ApplyActive(activeSet);
-
-                        guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
-
-                        EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
-                        EditorSceneManager.SaveOpenScenes();
-
-                        var record = new VRCAvatar
-                        {
-                            ID = pm.blueprintId ?? string.Empty,
-                            Name = ResolveUploadedName(plan, variant),
-                            Description = ResolveUploadedDescription(plan, variant),
-                            Tags = new List<string>(),
-                            ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
-                        };
-
-                        try
-                        {
-                            await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
-                        }
-                        catch (Exception ex) when (!string.IsNullOrWhiteSpace(record.ID) && IsThumbnailAlreadyUploadedError(ex))
-                        {
-                            // VRChat 的文件服务对用户账户做 MD5 去重：重传一张和服务器上已有的缩略图内容
-                            // 完全一致的 PNG，SDK 会抛 UploadException("This file was already uploaded")。
-                            // 这种情况下 bundle 已经更新成功，缩略图保持原样即是正确结果，按成功继续。
-                            Debug.LogWarning(string.Format(
-                                "[AvatarVariantSwitcher] 装扮 \"{0}\" 的缩略图与 VRChat 上已有的完全相同（MD5 重复），SDK 抛出 \"already uploaded\"。Bundle 已更新，缩略图保持原样，按成功继续。",
-                                variant.displayName));
-                        }
-
+                    try
+                    {
                         var blueprintId = pm.blueprintId ?? string.Empty;
                         if (string.IsNullOrWhiteSpace(blueprintId))
                         {
@@ -468,9 +478,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     }
                     catch (Exception ex)
                     {
-                        var shortMsg = ClassifyErrorForUser(ex);
-                        progressWindow.MarkFailure(index, shortMsg);
-                        return new FailureRecord(index, variant.displayName, shortMsg);
+                        progressWindow.MarkFailure(index, ClassifyErrorForUser(ex));
+                        throw;
                     }
                 }
 

@@ -1,6 +1,8 @@
 /Generated/
 /Tools~/AvatarVariantOscBridge/bin/
 /Tools~/AvatarVariantOscBridge/obj/
+/Tools~/AvatarVariantOscBridge.Tests/bin/
+/Tools~/AvatarVariantOscBridge.Tests/obj/
 /.vs/
 /.codex
 *.user
