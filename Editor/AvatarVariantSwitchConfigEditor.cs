@@ -346,6 +346,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     {
                         var child = root.transform.GetChild(ci).gameObject;
                         if (child == null) continue;
+                        if (!ShouldAutoAddAccessoryChild(child)) continue;
                         if (existingTargets.Contains(child)) continue;
                         entry.accessories.Add(new AvatarVariantAccessory
                         {
@@ -535,6 +536,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     var child = root.transform.GetChild(ci).gameObject;
                     if (child == null) continue;
+                    if (!ShouldAutoAddAccessoryChild(child)) continue;
                     if (existingTargets.Contains(child)) continue;
                     RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
                     entry.accessories.Add(new AvatarVariantAccessory
@@ -590,6 +592,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     var child = root.transform.GetChild(ci).gameObject;
                     if (child == null) continue;
+                    if (!ShouldAutoAddAccessoryChild(child)) continue;
                     if (existingTargets.Contains(child)) continue;
                     RecordConfigUndo(config, "Scan accessories", ref undoRecorded);
                     entry.accessories.Add(new AvatarVariantAccessory
@@ -615,6 +618,42 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 "Avatar Variant Switcher",
                 "No new direct child objects were found to add to the accessory list.",
                 "OK");
+        }
+
+        private static bool ShouldAutoAddAccessoryChild(GameObject child)
+        {
+            if (child == null)
+            {
+                return false;
+            }
+
+            if (LooksLikeSkeletonRoot(child))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool LooksLikeSkeletonRoot(GameObject child)
+        {
+            if (child == null)
+            {
+                return false;
+            }
+
+            var name = (child.name ?? string.Empty).Trim();
+            if (name.IndexOf("armature", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (name.IndexOf("skeleton", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return child.GetComponent<Animator>() != null;
         }
 
         private readonly struct FieldLabel
