@@ -157,10 +157,20 @@ internal sealed class MDnsResponder : IDisposable
         lock (_stateLock)
         {
             // Pass 1: cache A records so SRV resolution has targets.
+            var refreshedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in allRecords)
             {
                 if (r.Type == DnsCodec.TypeA && r.Address != null)
+                {
                     _hostCache[r.Name] = r.Address;
+                    refreshedHosts.Add(r.Name);
+                }
+            }
+
+            foreach (var state in _discoveryCache.Values)
+            {
+                if (!string.IsNullOrEmpty(state.Target) && refreshedHosts.Contains(state.Target))
+                    TryFlushDiscovered(state);
             }
 
             // Pass 2: PTR / SRV — populate discovery state.

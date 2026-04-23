@@ -22,9 +22,12 @@ internal sealed class VariantBridge
     private FileSystemWatcher? _watcher;
     private Timer? _reloadTimer;
     private const int ReloadDebounceMs = 500;
+    private static readonly TimeSpan PendingSwitchRetryDelay = TimeSpan.FromSeconds(2);
 
     private string? _currentAvatarId;
-    private int? _lastObservedValue;
+    private string? _pendingAvatarId;
+    private int? _pendingParamValue;
+    private DateTime _pendingSinceUtc;
 
     public VariantBridge(BridgeOptions options)
     {
@@ -100,6 +103,7 @@ internal sealed class VariantBridge
             if (message.Arguments.Count > 0 && message.Arguments[0] is string avatarId)
             {
                 _currentAvatarId = avatarId;
+                ClearPendingSwitch();
                 Console.WriteLine($"[{Timestamp()}] current avatar -> {avatarId}");
             }
             return;
@@ -117,10 +121,6 @@ internal sealed class VariantBridge
             return;
         if (!TryReadIntArg(message, out var value))
             return;
-        if (_lastObservedValue == value)
-            return;
-
-        _lastObservedValue = value;
 
         if (!index.TryGetValue(value, out var entry))
         {
@@ -137,6 +137,11 @@ internal sealed class VariantBridge
             Console.WriteLine($"[{Timestamp()}] value={value}: already on {entry.BlueprintId}.");
             return;
         }
+        if (IsPendingSwitch(entry.BlueprintId, value))
+        {
+            Console.WriteLine($"[{Timestamp()}] value={value} ({entry.DisplayName}): switch already pending confirmation.");
+            return;
+        }
 
         var target = ResolveSendTarget();
         if (target == null)
@@ -147,8 +152,31 @@ internal sealed class VariantBridge
 
         var packet = OscCodec.WriteMessage("/avatar/change", entry.BlueprintId);
         _sender.Send(packet, packet.Length, target);
-        _currentAvatarId = entry.BlueprintId;
+        MarkPendingSwitch(entry.BlueprintId, value);
         Console.WriteLine($"[{Timestamp()}] value={value} -> {entry.DisplayName} ({entry.BlueprintId})");
+    }
+
+    private bool IsPendingSwitch(string blueprintId, int value)
+    {
+        if (!string.Equals(_pendingAvatarId, blueprintId, StringComparison.Ordinal))
+            return false;
+        if (_pendingParamValue != value)
+            return false;
+        return DateTime.UtcNow - _pendingSinceUtc < PendingSwitchRetryDelay;
+    }
+
+    private void MarkPendingSwitch(string blueprintId, int value)
+    {
+        _pendingAvatarId = blueprintId;
+        _pendingParamValue = value;
+        _pendingSinceUtc = DateTime.UtcNow;
+    }
+
+    private void ClearPendingSwitch()
+    {
+        _pendingAvatarId = null;
+        _pendingParamValue = null;
+        _pendingSinceUtc = default;
     }
 
     private IPEndPoint? ResolveSendTarget()

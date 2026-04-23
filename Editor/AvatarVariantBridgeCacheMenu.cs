@@ -27,8 +27,14 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 return;
             }
 
-            AvatarVariantBridgeLauncher.ClearCache();
-            EditorUtility.DisplayDialog("清除桥缓存", "完成。下次启动桥时会重新下载。", "确定");
+            if (AvatarVariantBridgeLauncher.TryClearCache(out _))
+            {
+                EditorUtility.DisplayDialog("清除桥缓存", "完成。下次启动桥时会重新下载。", "确定");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("清除桥缓存", "清理失败。请先关闭 OSC 桥的 console 窗口后再试一次。", "确定");
+            }
         }
     }
 }

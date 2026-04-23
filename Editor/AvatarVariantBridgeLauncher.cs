@@ -277,17 +277,21 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return http;
         }
 
-        internal static void ClearCache()
+        internal static bool TryClearCache(out string errorMessage)
         {
+            errorMessage = string.Empty;
             try
             {
                 if (File.Exists(BridgeExePath)) File.Delete(BridgeExePath);
                 if (File.Exists(VersionPath)) File.Delete(VersionPath);
+                return true;
             }
             catch (Exception ex)
             {
+                errorMessage = ex.Message;
                 Debug.LogWarning($"[AvatarVariantSwitcher] 清除缓存失败：{ex.Message}");
             }
+            return false;
         }
 
         internal static string GetCacheDirectoryForDisplay() => CacheDirectory;
