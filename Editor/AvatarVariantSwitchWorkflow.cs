@@ -2,553 +2,827 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using Lanstard.AvatarVariantSwitcher;
 using nadena.dev.modular_avatar.core;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using VRC.Core;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
-using VRC.SDK3A.Editor;
 using VRC.SDKBase.Editor.Api;
 
-public static class AvatarVariantSwitchWorkflow
+namespace Lanstard.AvatarVariantSwitcher.Editor
 {
-    private const string GeneratedMenuRootName = "_AvatarVariantMenu";
-    private static bool _isBusy;
-
-    public static bool IsBusy => _isBusy;
-
-    public static void GenerateMenu(AvatarVariantSwitchConfig config)
+    public static class AvatarVariantSwitchWorkflow
     {
-        if (!TryValidateConfig(config, requireThumbnail: false, requireUploadedBlueprintIds: false, out var error))
+        private const string DialogTitle = "Avatar Variant Switcher";
+        private const string GeneratedMenuRootName = "_AvatarSwitcherMenu";
+        private static bool _busy;
+
+        public static bool IsBusy
         {
-            EditorUtility.DisplayDialog("Avatar Variant Switcher", error, "OK");
-            return;
+            get { return _busy; }
         }
 
-        var root = EnsureGeneratedMenuRoot(config);
-        ClearGeneratedMenuRoot(root);
-
-        var installTarget = config.installTargetMenu != null
-            ? config.installTargetMenu
-            : config.avatarDescriptor.expressionsMenu;
-
-        var installer = Undo.AddComponent<ModularAvatarMenuInstaller>(root);
-        installer.installTargetMenu = installTarget;
-
-        var parameters = Undo.AddComponent<ModularAvatarParameters>(root);
-        parameters.parameters = new List<ParameterConfig>
+        public static void GenerateMenu(AvatarVariantSwitchConfig cfg)
         {
-            new ParameterConfig
+            if (!Validate(cfg, false, out var error))
             {
-                nameOrPrefix = config.parameterName.Trim(),
-                saved = true,
-                syncType = ParameterSyncType.Int,
-                localOnly = false,
-                defaultValue = config.defaultValue,
-                hasExplicitDefaultValue = true
-            }
-        };
-
-        var submenu = Undo.AddComponent<ModularAvatarMenuItem>(root);
-        submenu.label = GetResolvedMenuName(config);
-        submenu.Control = new VRCExpressionsMenu.Control
-        {
-            name = submenu.label,
-            type = VRCExpressionsMenu.Control.ControlType.SubMenu
-        };
-        submenu.MenuSource = SubmenuSource.Children;
-
-        foreach (var entry in config.variants)
-        {
-            var itemObject = new GameObject(string.IsNullOrWhiteSpace(entry.displayName) ? "Variant" : entry.displayName);
-            Undo.RegisterCreatedObjectUndo(itemObject, "Create variant menu item");
-            itemObject.transform.SetParent(root.transform, false);
-
-            var menuItem = Undo.AddComponent<ModularAvatarMenuItem>(itemObject);
-            menuItem.label = entry.displayName;
-            menuItem.automaticValue = false;
-            menuItem.Control = new VRCExpressionsMenu.Control
-            {
-                name = entry.displayName,
-                icon = entry.menuIcon,
-                type = VRCExpressionsMenu.Control.ControlType.Button,
-                parameter = new VRCExpressionsMenu.Control.Parameter
-                {
-                    name = config.parameterName.Trim()
-                },
-                value = entry.value
-            };
-        }
-
-        EditorUtility.SetDirty(root);
-        EditorUtility.SetDirty(config);
-        MarkSceneDirty(config);
-        AssetDatabase.SaveAssets();
-    }
-
-    public static void ExportMappingFile(AvatarVariantSwitchConfig config)
-    {
-        if (!TryValidateConfig(config, requireThumbnail: false, requireUploadedBlueprintIds: true, out var error))
-        {
-            EditorUtility.DisplayDialog("Avatar Variant Switcher", error, "OK");
-            return;
-        }
-
-        var outputPath = WriteMappingFile(config);
-        EditorUtility.DisplayDialog("Avatar Variant Switcher", $"Mapping file exported to:\n{outputPath}", "OK");
-    }
-
-    public static async void StartBatchUpload(AvatarVariantSwitchConfig config)
-    {
-        if (_isBusy)
-        {
-            EditorUtility.DisplayDialog("Avatar Variant Switcher", "A batch upload is already running.", "OK");
-            return;
-        }
-
-        if (!TryValidateConfig(config, requireThumbnail: true, requireUploadedBlueprintIds: false, out var error))
-        {
-            EditorUtility.DisplayDialog("Avatar Variant Switcher", error, "OK");
-            return;
-        }
-
-        _isBusy = true;
-
-        try
-        {
-            GenerateMenu(config);
-            await RunBatchUploadInternal(config);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogException(ex);
-            EditorUtility.DisplayDialog("Avatar Variant Switcher", $"Batch upload failed:\n{ex.Message}", "OK");
-        }
-        finally
-        {
-            EditorUtility.ClearProgressBar();
-            _isBusy = false;
-        }
-    }
-
-    private static async Task RunBatchUploadInternal(AvatarVariantSwitchConfig config)
-    {
-        var avatarRoot = config.AvatarRoot;
-        var pipelineManager = avatarRoot.GetComponent<PipelineManager>();
-        if (pipelineManager == null)
-        {
-            throw new InvalidOperationException("The avatar root is missing a PipelineManager component.");
-        }
-
-        var uniqueRoots = CollectUniqueVariantRoots(config);
-        var originalTags = uniqueRoots.ToDictionary(root => root, root => root.tag);
-        var originalBlueprintId = pipelineManager.blueprintId;
-        var thumbnailPath = ResolveThumbnailPath(config.thumbnail);
-
-        try
-        {
-            var builder = await EnsureAvatarBuilderAsync();
-            builder.SelectAvatar(avatarRoot);
-
-            for (var index = 0; index < config.variants.Count; index++)
-            {
-                var entry = config.variants[index];
-                var title = $"Uploading {index + 1}/{config.variants.Count}";
-                EditorUtility.DisplayProgressBar(title, entry.displayName, (float)index / config.variants.Count);
-
-                ApplyVariantTags(uniqueRoots, entry);
-
-                Undo.RecordObject(pipelineManager, "Clear avatar blueprint ID");
-                pipelineManager.blueprintId = string.Empty;
-                EditorUtility.SetDirty(pipelineManager);
-                MarkSceneDirty(config);
-
-                await Task.Delay(200);
-
-                var avatarRecord = CreateAvatarRecord(config, entry);
-                await builder.BuildAndUpload(avatarRoot, avatarRecord, thumbnailPath);
-
-                entry.uploadedBlueprintId = pipelineManager.blueprintId;
-                EditorUtility.SetDirty(config);
-
-                WriteMappingFile(config);
-                await Task.Delay(200);
-            }
-        }
-        finally
-        {
-            RestoreOriginalTags(originalTags);
-            Undo.RecordObject(pipelineManager, "Restore avatar blueprint ID");
-            pipelineManager.blueprintId = originalBlueprintId;
-            EditorUtility.SetDirty(pipelineManager);
-            EditorUtility.SetDirty(config);
-            MarkSceneDirty(config);
-            AssetDatabase.SaveAssets();
-        }
-    }
-
-    private static VRCAvatar CreateAvatarRecord(AvatarVariantSwitchConfig config, AvatarVariantEntry entry)
-    {
-        var avatarName = string.IsNullOrWhiteSpace(entry.uploadedAvatarName)
-            ? $"{config.uploadedAvatarNamePrefix}{config.AvatarRoot.name} - {entry.displayName}".Trim()
-            : entry.uploadedAvatarName.Trim();
-
-        if (string.IsNullOrWhiteSpace(avatarName))
-        {
-            avatarName = $"{config.AvatarRoot.name} - {entry.displayName}";
-        }
-
-        var description = string.IsNullOrWhiteSpace(entry.uploadedDescription)
-            ? config.uploadedAvatarDescription ?? string.Empty
-            : entry.uploadedDescription;
-
-        return new VRCAvatar
-        {
-            ID = string.Empty,
-            Name = avatarName,
-            Description = description ?? string.Empty,
-            Tags = new List<string>(),
-            ReleaseStatus = config.releaseStatus == AvatarReleaseStatus.Public ? "public" : "private"
-        };
-    }
-
-    private static async Task<IVRCSdkAvatarBuilderApi> EnsureAvatarBuilderAsync()
-    {
-        EditorApplication.ExecuteMenuItem("VRChat SDK/Show Control Panel");
-
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            if (VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out var builder))
-            {
-                if (!APIUser.IsLoggedIn)
-                {
-                    throw new InvalidOperationException("Please log in through the VRChat SDK panel before starting batch upload.");
-                }
-
-                return builder;
+                EditorUtility.DisplayDialog(DialogTitle, error, "确定");
+                return;
             }
 
-            await Task.Delay(100);
+            AvatarVariantMenuBuilder.Generate(cfg);
         }
 
-        throw new InvalidOperationException("Could not access the VRChat avatar builder. Open the VRChat SDK panel first.");
-    }
-
-    private static GameObject EnsureGeneratedMenuRoot(AvatarVariantSwitchConfig config)
-    {
-        if (config.generatedMenuRoot != null && config.generatedMenuRoot.transform.parent == config.AvatarRoot.transform)
+        public static void WriteMap(AvatarVariantSwitchConfig cfg)
         {
-            return config.generatedMenuRoot;
-        }
-
-        var menuRoot = new GameObject(GeneratedMenuRootName);
-        Undo.RegisterCreatedObjectUndo(menuRoot, "Create avatar variant menu root");
-        menuRoot.transform.SetParent(config.AvatarRoot.transform, false);
-        config.generatedMenuRoot = menuRoot;
-        EditorUtility.SetDirty(config);
-        return menuRoot;
-    }
-
-    private static void ClearGeneratedMenuRoot(GameObject root)
-    {
-        for (var i = root.transform.childCount - 1; i >= 0; i--)
-        {
-            Undo.DestroyObjectImmediate(root.transform.GetChild(i).gameObject);
-        }
-
-        var components = root.GetComponents<Component>();
-        foreach (var component in components)
-        {
-            if (component is Transform)
+            if (!Validate(cfg, false, out var error))
             {
-                continue;
+                EditorUtility.DisplayDialog(DialogTitle, error, "确定");
+                return;
             }
 
-            Undo.DestroyObjectImmediate(component);
-        }
-    }
-
-    private static List<GameObject> CollectUniqueVariantRoots(AvatarVariantSwitchConfig config)
-    {
-        return config.variants
-            .SelectMany(entry => entry.includedRoots ?? Enumerable.Empty<GameObject>())
-            .Where(root => root != null)
-            .Distinct()
-            .ToList();
-    }
-
-    private static void ApplyVariantTags(IEnumerable<GameObject> uniqueRoots, AvatarVariantEntry activeEntry)
-    {
-        var activeSet = new HashSet<GameObject>((activeEntry.includedRoots ?? new List<GameObject>()).Where(root => root != null));
-
-        foreach (var root in uniqueRoots)
-        {
-            Undo.RecordObject(root, "Set avatar variant tag");
-            root.tag = activeSet.Contains(root) ? "Untagged" : "EditorOnly";
-            EditorUtility.SetDirty(root);
-        }
-    }
-
-    private static void RestoreOriginalTags(IReadOnlyDictionary<GameObject, string> originalTags)
-    {
-        foreach (var pair in originalTags)
-        {
-            if (pair.Key == null)
-            {
-                continue;
-            }
-
-            Undo.RecordObject(pair.Key, "Restore avatar variant tag");
-            pair.Key.tag = pair.Value;
-            EditorUtility.SetDirty(pair.Key);
-        }
-    }
-
-    private static string ResolveThumbnailPath(Texture2D thumbnail)
-    {
-        var assetPath = AssetDatabase.GetAssetPath(thumbnail);
-        if (string.IsNullOrWhiteSpace(assetPath))
-        {
-            throw new InvalidOperationException("Thumbnail must be an image asset inside the Unity project.");
-        }
-
-        var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
-        if (string.IsNullOrWhiteSpace(projectRoot))
-        {
-            throw new InvalidOperationException("Could not resolve the Unity project root.");
-        }
-
-        var fullPath = Path.GetFullPath(Path.Combine(projectRoot, assetPath));
-        if (!File.Exists(fullPath))
-        {
-            throw new FileNotFoundException("Thumbnail file was not found.", fullPath);
-        }
-
-        return fullPath;
-    }
-
-    private static string WriteMappingFile(AvatarVariantSwitchConfig config)
-    {
-        var mapping = new AvatarVariantMapFile
-        {
-            version = 1,
-            generatedAtUtc = DateTime.UtcNow.ToString("O"),
-            avatarName = config.AvatarRoot.name,
-            parameterName = config.parameterName.Trim(),
-            menuName = GetResolvedMenuName(config),
-            defaultValue = config.defaultValue,
-            entries = config.variants.Select(entry => new AvatarVariantMapEntry
-            {
-                value = entry.value,
-                name = entry.displayName,
-                blueprintId = entry.uploadedBlueprintId
-            }).ToList()
-        };
-
-        var outputPath = ResolveOutputPath(config.mappingFilePath);
-        var directory = Path.GetDirectoryName(outputPath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        File.WriteAllText(outputPath, JsonUtility.ToJson(mapping, true), new UTF8Encoding(false));
-
-        if (outputPath.StartsWith(Application.dataPath, StringComparison.OrdinalIgnoreCase))
-        {
-            AssetDatabase.Refresh();
-        }
-
-        return outputPath;
-    }
-
-    private static string ResolveOutputPath(string configuredPath)
-    {
-        if (string.IsNullOrWhiteSpace(configuredPath))
-        {
-            throw new InvalidOperationException("Mapping file output path is required.");
-        }
-
-        if (Path.IsPathRooted(configuredPath))
-        {
-            return configuredPath;
-        }
-
-        var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
-        if (string.IsNullOrWhiteSpace(projectRoot))
-        {
-            throw new InvalidOperationException("Could not resolve the Unity project root.");
-        }
-
-        return Path.GetFullPath(Path.Combine(projectRoot, configuredPath));
-    }
-
-    private static bool TryValidateConfig(
-        AvatarVariantSwitchConfig config,
-        bool requireThumbnail,
-        bool requireUploadedBlueprintIds,
-        out string error)
-    {
-        if (config == null)
-        {
-            error = "Config object is missing.";
-            return false;
-        }
-
-        if (config.avatarDescriptor == null)
-        {
-            config.avatarDescriptor = config.GetComponent<VRCAvatarDescriptor>();
-            EditorUtility.SetDirty(config);
-        }
-
-        if (config.avatarDescriptor == null)
-        {
-            error = "Attach this component to the avatar root, or assign Avatar Descriptor manually.";
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(config.parameterName))
-        {
-            error = "Parameter name cannot be empty.";
-            return false;
-        }
-
-        if (config.variants == null || config.variants.Count == 0)
-        {
-            error = "At least one variant entry is required.";
-            return false;
-        }
-
-        var usedValues = new HashSet<int>();
-        foreach (var entry in config.variants)
-        {
-            if (entry == null)
-            {
-                error = "The variants list contains a null entry.";
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(entry.displayName))
-            {
-                error = "Each variant must have a displayName.";
-                return false;
-            }
-
-            if (entry.includedRoots == null)
-            {
-                error = $"Variant '{entry.displayName}' has a null includedRoots list.";
-                return false;
-            }
-
-            if (!usedValues.Add(entry.value))
-            {
-                error = $"Duplicate parameter value found: {entry.value}";
-                return false;
-            }
-
-            foreach (var root in entry.includedRoots.Where(root => root != null))
-            {
-                if (!root.transform.IsChildOf(config.AvatarRoot.transform))
-                {
-                    error = $"Object '{root.name}' is not under the current avatar root.";
-                    return false;
-                }
-            }
-
-            if (requireUploadedBlueprintIds && string.IsNullOrWhiteSpace(entry.uploadedBlueprintId))
-            {
-                error = $"Variant '{entry.displayName}' does not have an uploaded blueprint ID yet.";
-                return false;
-            }
-        }
-
-        var trackedRoots = CollectUniqueVariantRoots(config);
-        foreach (var root in trackedRoots)
-        {
-            if (root == null)
-            {
-                error = "The variants list contains a missing object reference.";
-                return false;
-            }
-        }
-
-        for (var i = 0; i < trackedRoots.Count; i++)
-        {
-            for (var j = i + 1; j < trackedRoots.Count; j++)
-            {
-                if (trackedRoots[i].transform.IsChildOf(trackedRoots[j].transform)
-                    || trackedRoots[j].transform.IsChildOf(trackedRoots[i].transform))
-                {
-                    error = $"Overlapping roots detected: {trackedRoots[i].name} / {trackedRoots[j].name}. Do not put parent and child objects into variant roots at the same time.";
-                    return false;
-                }
-            }
-        }
-
-        if (requireThumbnail && config.thumbnail == null)
-        {
-            error = "A thumbnail is required before batch upload.";
-            return false;
-        }
-
-        if (requireThumbnail)
-        {
             try
             {
-                ResolveThumbnailPath(config.thumbnail);
+                var map = AvatarVariantMap.Read(cfg.outputMapPath);
+                map.parameterName = cfg.parameterName.Trim();
+                map.menuName = ResolveMenuName(cfg);
+                map.defaultValue = cfg.defaultValue;
+
+                foreach (var variant in cfg.variants)
+                {
+                    var existing = map.FindByKey(variant.variantKey);
+                    if (existing == null || string.IsNullOrWhiteSpace(existing.blueprintId))
+                    {
+                        continue;
+                    }
+
+                    map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, existing.blueprintId);
+                }
+
+                AvatarVariantMap.WriteAtomic(cfg.outputMapPath, map);
+                EditorUtility.DisplayDialog(DialogTitle, "映射文件已写入。", "确定");
             }
             catch (Exception ex)
             {
-                error = ex.Message;
-                return false;
+                Debug.LogException(ex);
+                EditorUtility.DisplayDialog(DialogTitle, "写入映射文件失败：" + ex.Message, "确定");
             }
         }
 
-        if (string.IsNullOrWhiteSpace(config.mappingFilePath))
+        public static async void StartBatchUpload(AvatarVariantSwitchConfig cfg)
         {
-            error = "Mapping file output path is required.";
+            if (_busy)
+            {
+                EditorUtility.DisplayDialog(DialogTitle, "已有批量上传任务正在运行。", "确定");
+                return;
+            }
+
+            if (!Validate(cfg, true, out var error))
+            {
+                EditorUtility.DisplayDialog(DialogTitle, error, "确定");
+                return;
+            }
+
+            try
+            {
+                await RunBatchUploadAsync(cfg);
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.Log("Batch upload cancelled.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                EditorUtility.DisplayDialog(DialogTitle, "批量上传失败：" + ex.Message, "确定");
+            }
+        }
+
+        public static void PruneStaleMapKeys(AvatarVariantSwitchConfig cfg)
+        {
+            try
+            {
+                var report = BuildValidationReport(cfg, false);
+                if (report.StaleVariants.Count == 0)
+                {
+                    EditorUtility.DisplayDialog(DialogTitle, "当前没有可清理的旧映射记录。", "确定");
+                    return;
+                }
+
+                if (!EditorUtility.DisplayDialog(
+                        DialogTitle,
+                        string.Format("映射文件里有 {0} 条当前配置已不存在的旧记录，确认删除吗？", report.StaleVariants.Count),
+                        "Prune",
+                        "取消"))
+                {
+                    return;
+                }
+
+                var map = AvatarVariantMap.Read(cfg.outputMapPath);
+                var validKeys = new HashSet<string>(
+                    (cfg.variants ?? new List<AvatarVariantEntry>())
+                        .Where(variant => variant != null && !string.IsNullOrWhiteSpace(variant.variantKey))
+                        .Select(variant => variant.variantKey));
+
+                map.PruneKeysNotIn(validKeys);
+                map.parameterName = cfg.parameterName.Trim();
+                map.menuName = ResolveMenuName(cfg);
+                map.defaultValue = cfg.defaultValue;
+                AvatarVariantMap.WriteAtomic(cfg.outputMapPath, map);
+
+                EditorUtility.DisplayDialog(DialogTitle, "旧映射记录已清理。", "确定");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                EditorUtility.DisplayDialog(DialogTitle, "清理旧映射记录失败：" + ex.Message, "确定");
+            }
+        }
+
+        public static bool Validate(AvatarVariantSwitchConfig cfg, bool requireThumbnails, out string error)
+        {
+            var report = BuildValidationReport(cfg, requireThumbnails);
+            if (report.Errors.Count == 0)
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            error = string.Join("\n", report.Errors.ToArray());
             return false;
         }
 
-        error = string.Empty;
-        return true;
-    }
-
-    private static string GetResolvedMenuName(AvatarVariantSwitchConfig config)
-    {
-        return string.IsNullOrWhiteSpace(config.menuName) ? config.parameterName.Trim() : config.menuName.Trim();
-    }
-
-    private static void MarkSceneDirty(AvatarVariantSwitchConfig config)
-    {
-        if (config != null && config.gameObject.scene.IsValid())
+        internal static ValidationReport BuildValidationReport(AvatarVariantSwitchConfig cfg, bool requireThumbnails)
         {
-            EditorSceneManager.MarkSceneDirty(config.gameObject.scene);
+            var report = new ValidationReport();
+            if (cfg == null)
+            {
+                report.Errors.Add("配置组件不存在。");
+                return report;
+            }
+
+            EnsureVariantKeys(cfg);
+            EnsureAvatarDescriptor(cfg);
+
+            var avatarRoot = cfg.AvatarRoot;
+            var avatarDescriptor = cfg.avatarDescriptor;
+            var parameterName = (cfg.parameterName ?? string.Empty).Trim();
+
+            if (avatarDescriptor == null)
+            {
+                report.Errors.Add("请把 Config 挂到带 VRCAvatarDescriptor 的 avatar root 上。");
+                return report;
+            }
+
+            if (avatarRoot == null)
+            {
+                report.Errors.Add("无法解析 Avatar Root。");
+                return report;
+            }
+
+            if (avatarRoot.GetComponent<VRCAvatarDescriptor>() == null)
+            {
+                report.Errors.Add("主 Avatar Root 缺少 VRCAvatarDescriptor。");
+            }
+
+            if (avatarRoot.GetComponent<PipelineManager>() == null)
+            {
+                report.Errors.Add("主 Avatar Root 缺少 PipelineManager。");
+            }
+
+            if (string.IsNullOrWhiteSpace(parameterName))
+            {
+                report.Errors.Add("参数名不能为空。");
+            }
+
+            var variants = cfg.variants ?? new List<AvatarVariantEntry>();
+            if (variants.Count == 0)
+            {
+                report.Errors.Add("至少需要配置一个变体。");
+            }
+            else if (variants.Count > 7)
+            {
+                report.Errors.Add("当前版本最多支持 7 个变体；请先减少数量。");
+            }
+
+            var variantKeys = new HashSet<string>();
+            var paramValues = new HashSet<int>();
+            var controlledRoots = new List<GameObject>();
+
+            for (var i = 0; i < variants.Count; i++)
+            {
+                var variant = variants[i];
+                if (variant == null)
+                {
+                    report.Errors.Add(string.Format("第 {0} 个变体为空。", i + 1));
+                    continue;
+                }
+
+                var label = GetVariantLabel(variant, i);
+                if (string.IsNullOrWhiteSpace(variant.displayName))
+                {
+                    report.Errors.Add(string.Format("变体 {0} 的显示名称不能为空。", label));
+                }
+
+                if (string.IsNullOrWhiteSpace(variant.variantKey))
+                {
+                    report.Errors.Add(string.Format("变体 {0} 缺少稳定标识 variantKey。", label));
+                }
+                else if (!variantKeys.Add(variant.variantKey))
+                {
+                    report.Errors.Add(string.Format("变体 {0} 的 variantKey 与其他变体重复。", label));
+                }
+
+                if (variant.paramValue < 0)
+                {
+                    report.Errors.Add(string.Format("变体 {0} 的 paramValue 不能小于 0。", label));
+                }
+                else if (!paramValues.Add(variant.paramValue))
+                {
+                    report.Errors.Add(string.Format("变体 {0} 的 paramValue 与其他变体重复。", label));
+                }
+
+                if (variant.includedRoots == null)
+                {
+                    report.Errors.Add(string.Format("变体 {0} 的 includedRoots 不能为空。", label));
+                    continue;
+                }
+
+                foreach (var root in variant.includedRoots.Where(root => root != null))
+                {
+                    if (!root.transform.IsChildOf(avatarRoot.transform))
+                    {
+                        report.Errors.Add(string.Format("变体 {0} 引用了不属于当前 Avatar Root 的对象：{1}。", label, root.name));
+                        continue;
+                    }
+
+                    if (IsUnderMenuRoot(root, cfg))
+                    {
+                        report.Errors.Add(string.Format("变体 {0} 不能包含 _AvatarSwitcherMenu 或其子物体：{1}。", label, root.name));
+                        continue;
+                    }
+
+                    controlledRoots.Add(root);
+                }
+
+                if (requireThumbnails)
+                {
+                    try
+                    {
+                        ResolveThumbnailPath(variant.thumbnail, label);
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Errors.Add(ex.Message);
+                    }
+                }
+            }
+
+            if (variants.Count > 0 && !variants.Any(variant => variant != null && variant.paramValue == cfg.defaultValue))
+            {
+                report.Errors.Add("defaultValue 必须对应某一个变体的 paramValue。");
+            }
+
+            ValidateControlledRoots(controlledRoots, report);
+            ValidateParameterConflicts(cfg, parameterName, report);
+            ValidateOutputPath(cfg.outputMapPath, report);
+            ValidateMenuCapacity(avatarDescriptor, report);
+            PopulateStaleMapInfo(cfg, report);
+
+            return report;
         }
-    }
 
-    [Serializable]
-    private class AvatarVariantMapFile
-    {
-        public int version;
-        public string generatedAtUtc;
-        public string avatarName;
-        public string parameterName;
-        public string menuName;
-        public int defaultValue;
-        public List<AvatarVariantMapEntry> entries;
-    }
+        private static async Task RunBatchUploadAsync(AvatarVariantSwitchConfig cfg)
+        {
+            _busy = true;
+            using var cts = new CancellationTokenSource();
+            AvatarVariantTagGuard guard = null;
+            EditorApplication.LockReloadAssemblies();
 
-    [Serializable]
-    private class AvatarVariantMapEntry
-    {
-        public int value;
-        public string name;
-        public string blueprintId;
+            try
+            {
+                var plan = BatchPlan.Snapshot(cfg);
+                AvatarVariantMenuBuilder.Generate(cfg);
+
+                var map = AvatarVariantMap.Read(plan.outputMapPath);
+                map.parameterName = plan.parameterName;
+                map.menuName = plan.menuName;
+                map.defaultValue = plan.defaultValue;
+
+                var pm = plan.avatarRoot.GetComponent<PipelineManager>();
+                if (pm == null)
+                {
+                    throw new InvalidOperationException("主 Avatar Root 缺少 PipelineManager。");
+                }
+
+                var controlledRoots = plan.variants
+                    .SelectMany(variant => variant.includedRoots)
+                    .Where(root => root != null)
+                    .Where(root => !IsUnderMenuRoot(root, cfg))
+                    .Distinct()
+                    .ToList();
+
+                guard = AvatarVariantTagGuard.Capture(pm, controlledRoots);
+
+                var builder = await AvatarVariantBuilderGate.AcquireAsync(cts.Token);
+                builder.SelectAvatar(plan.avatarRoot);
+                EditorSceneManager.SaveOpenScenes();
+
+                for (var i = 0; i < plan.variants.Count; i++)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+                    var variant = plan.variants[i];
+                    if (EditorUtility.DisplayCancelableProgressBar(
+                            DialogTitle,
+                            string.Format("正在上传 {0}/{1}：{2}", i + 1, plan.variants.Count, variant.displayName),
+                            (float)i / Math.Max(1, plan.variants.Count)))
+                    {
+                        cts.Cancel();
+                    }
+
+                    cts.Token.ThrowIfCancellationRequested();
+
+                    var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
+                    guard.ApplyActive(activeSet);
+
+                    var existing = map.FindByKey(variant.variantKey);
+                    guard.SetBlueprintId(existing != null ? existing.blueprintId : string.Empty);
+
+                    EditorSceneManager.MarkSceneDirty(plan.avatarRoot.scene);
+                    EditorSceneManager.SaveOpenScenes();
+
+                    var record = new VRCAvatar
+                    {
+                        ID = pm.blueprintId ?? string.Empty,
+                        Name = ResolveUploadedName(plan, variant),
+                        Description = variant.uploadedDescription ?? string.Empty,
+                        Tags = new List<string>(),
+                        ReleaseStatus = plan.releaseStatus == ReleaseStatus.Public ? "public" : "private"
+                    };
+
+                    await builder.BuildAndUpload(plan.avatarRoot, record, variant.thumbnailPath, cts.Token);
+
+                    var blueprintId = pm.blueprintId ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(blueprintId))
+                    {
+                        throw new InvalidOperationException(string.Format("变体“{0}”上传完成后没有得到 blueprintId。", variant.displayName));
+                    }
+
+                    map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
+                    AvatarVariantMap.WriteAtomic(plan.outputMapPath, map);
+
+                    await Task.Delay(200, cts.Token);
+                }
+
+                EditorUtility.DisplayDialog(DialogTitle, "批量上传完成。", "确定");
+            }
+            finally
+            {
+                try
+                {
+                    if (guard != null)
+                    {
+                        guard.Dispose();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                try
+                {
+                    EditorSceneManager.SaveOpenScenes();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                try
+                {
+                    EditorUtility.ClearProgressBar();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                try
+                {
+                    EditorApplication.UnlockReloadAssemblies();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                _busy = false;
+            }
+        }
+
+        private static void EnsureAvatarDescriptor(AvatarVariantSwitchConfig cfg)
+        {
+            if (cfg.avatarDescriptor != null)
+            {
+                return;
+            }
+
+            cfg.avatarDescriptor = cfg.GetComponent<VRCAvatarDescriptor>();
+            if (cfg.avatarDescriptor != null)
+            {
+                EditorUtility.SetDirty(cfg);
+            }
+        }
+
+        private static void EnsureVariantKeys(AvatarVariantSwitchConfig cfg)
+        {
+            if (cfg.variants == null)
+            {
+                return;
+            }
+
+            var changed = false;
+            foreach (var variant in cfg.variants)
+            {
+                if (variant == null || !string.IsNullOrWhiteSpace(variant.variantKey))
+                {
+                    continue;
+                }
+
+                variant.variantKey = Guid.NewGuid().ToString("N");
+                changed = true;
+            }
+
+            if (changed)
+            {
+                EditorUtility.SetDirty(cfg);
+            }
+        }
+
+        private static void ValidateControlledRoots(List<GameObject> controlledRoots, ValidationReport report)
+        {
+            var uniqueRoots = controlledRoots
+                .Where(root => root != null)
+                .Distinct()
+                .ToList();
+
+            for (var i = 0; i < uniqueRoots.Count; i++)
+            {
+                for (var j = i + 1; j < uniqueRoots.Count; j++)
+                {
+                    var a = uniqueRoots[i];
+                    var b = uniqueRoots[j];
+                    if (a.transform.IsChildOf(b.transform) || b.transform.IsChildOf(a.transform))
+                    {
+                        report.Errors.Add(string.Format("受控对象不能出现父子重叠：{0} / {1}。", a.name, b.name));
+                    }
+                }
+            }
+        }
+
+        private static void ValidateParameterConflicts(AvatarVariantSwitchConfig cfg, string parameterName, ValidationReport report)
+        {
+            if (string.IsNullOrWhiteSpace(parameterName) || cfg.avatarDescriptor == null)
+            {
+                return;
+            }
+
+            var expressionParameters = cfg.avatarDescriptor.expressionParameters;
+            if (expressionParameters != null && expressionParameters.parameters != null)
+            {
+                foreach (var parameter in expressionParameters.parameters)
+                {
+                    if (!string.Equals(parameter.name, parameterName, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (parameter.valueType != VRCExpressionParameters.ValueType.Int)
+                    {
+                        report.Errors.Add(string.Format("参数名“{0}”已在 Expression Parameters 中存在，但类型不是 Int。", parameterName));
+                    }
+                }
+            }
+
+            var allParameters = cfg.AvatarRoot.GetComponentsInChildren<ModularAvatarParameters>(true);
+            foreach (var parameterComponent in allParameters)
+            {
+                if (parameterComponent == null || IsUnderMenuRoot(parameterComponent.gameObject, cfg))
+                {
+                    continue;
+                }
+
+                if (parameterComponent.parameters == null)
+                {
+                    continue;
+                }
+
+                foreach (var parameter in parameterComponent.parameters)
+                {
+                    // ParameterConfig is a struct; skip default/empty entries by checking nameOrPrefix.
+                    if (string.IsNullOrWhiteSpace(parameter.nameOrPrefix))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(parameter.nameOrPrefix.Trim(), parameterName, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    report.Errors.Add(string.Format("参数名“{0}”已在其他 Modular Avatar Parameters 组件中定义。", parameterName));
+                    return;
+                }
+            }
+        }
+
+        private static void ValidateOutputPath(string outputMapPath, ValidationReport report)
+        {
+            if (string.IsNullOrWhiteSpace(outputMapPath))
+            {
+                report.Errors.Add("outputMapPath 不能为空。");
+                return;
+            }
+
+            if (outputMapPath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+            {
+                var packageRoot = GetPackageRoot(outputMapPath);
+                if (!string.IsNullOrWhiteSpace(packageRoot))
+                {
+                    var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(packageRoot);
+                    if (packageInfo != null && packageInfo.source != PackageSource.Embedded)
+                    {
+                        report.Warnings.Add("当前 outputMapPath 指向只读包目录，建议改到 Assets/...。");
+                    }
+                }
+            }
+
+            try
+            {
+                var _ = AvatarVariantMap.Read(outputMapPath);
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add("现有映射文件无法读取：" + ex.Message);
+            }
+        }
+
+        private static void ValidateMenuCapacity(VRCAvatarDescriptor avatarDescriptor, ValidationReport report)
+        {
+            if (avatarDescriptor == null || avatarDescriptor.expressionsMenu == null)
+            {
+                return;
+            }
+
+            var controls = avatarDescriptor.expressionsMenu.controls;
+            if (controls != null && controls.Count > 7)
+            {
+                report.Errors.Add("主 Expressions Menu 至少需要预留 1 个槽位给变体切换入口。");
+            }
+        }
+
+        private static void PopulateStaleMapInfo(AvatarVariantSwitchConfig cfg, ValidationReport report)
+        {
+            if (string.IsNullOrWhiteSpace(cfg.outputMapPath))
+            {
+                return;
+            }
+
+            AvatarVariantMap map;
+            try
+            {
+                map = AvatarVariantMap.Read(cfg.outputMapPath);
+            }
+            catch
+            {
+                return;
+            }
+
+            report.Map = map;
+            var validKeys = new HashSet<string>(
+                (cfg.variants ?? new List<AvatarVariantEntry>())
+                    .Where(variant => variant != null && !string.IsNullOrWhiteSpace(variant.variantKey))
+                    .Select(variant => variant.variantKey));
+
+            foreach (var variant in map.variants)
+            {
+                if (variant == null || string.IsNullOrWhiteSpace(variant.variantKey))
+                {
+                    continue;
+                }
+
+                if (!validKeys.Contains(variant.variantKey))
+                {
+                    report.StaleVariants.Add(variant);
+                }
+            }
+        }
+
+        private static string ResolveThumbnailPath(Texture2D thumbnail, string variantLabel)
+        {
+            if (thumbnail == null)
+            {
+                throw new InvalidOperationException(string.Format("变体 {0} 缺少缩略图。", variantLabel));
+            }
+
+            var assetPath = AssetDatabase.GetAssetPath(thumbnail);
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                throw new InvalidOperationException(string.Format("变体 {0} 的缩略图不是有效的项目资源。", variantLabel));
+            }
+
+            var fullPath = Path.GetFullPath(assetPath);
+            if (!File.Exists(fullPath))
+            {
+                throw new InvalidOperationException(string.Format("变体 {0} 的缩略图文件不存在：{1}", variantLabel, fullPath));
+            }
+
+            return fullPath;
+        }
+
+        private static string ResolveUploadedName(BatchPlan plan, BatchVariantPlan variant)
+        {
+            if (!string.IsNullOrWhiteSpace(variant.uploadedName))
+            {
+                return variant.uploadedName.Trim();
+            }
+
+            var resolved = string.Format("{0}{1} - {2}", plan.uploadedAvatarNamePrefix, plan.avatarRoot.name, variant.displayName).Trim();
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+
+            return string.Format("{0} - {1}", plan.avatarRoot.name, variant.displayName);
+        }
+
+        private static string ResolveMenuName(AvatarVariantSwitchConfig cfg)
+        {
+            if (!string.IsNullOrWhiteSpace(cfg.menuName))
+            {
+                return cfg.menuName.Trim();
+            }
+
+            return (cfg.parameterName ?? string.Empty).Trim();
+        }
+
+        private static bool IsUnderMenuRoot(GameObject candidate, AvatarVariantSwitchConfig cfg)
+        {
+            if (candidate == null || cfg == null || cfg.AvatarRoot == null)
+            {
+                return false;
+            }
+
+            var menuRoot = FindMenuRoot(cfg.AvatarRoot.transform);
+            if (menuRoot == null)
+            {
+                return false;
+            }
+
+            return candidate.transform == menuRoot || candidate.transform.IsChildOf(menuRoot);
+        }
+
+        private static Transform FindMenuRoot(Transform avatarRoot)
+        {
+            if (avatarRoot == null)
+            {
+                return null;
+            }
+
+            return avatarRoot.Find(GeneratedMenuRootName);
+        }
+
+        private static string GetPackageRoot(string assetPath)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                return string.Empty;
+            }
+
+            var normalized = assetPath.Replace('\\', '/');
+            var parts = normalized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || !string.Equals(parts[0], "Packages", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            return "Packages/" + parts[1];
+        }
+
+        private static string GetVariantLabel(AvatarVariantEntry variant, int index)
+        {
+            if (variant == null)
+            {
+                return string.Format("#{0}", index + 1);
+            }
+
+            if (!string.IsNullOrWhiteSpace(variant.displayName))
+            {
+                return variant.displayName.Trim();
+            }
+
+            return string.Format("#{0}", index + 1);
+        }
+
+        internal sealed class ValidationReport
+        {
+            public readonly List<string> Errors = new List<string>();
+            public readonly List<string> Warnings = new List<string>();
+            public readonly List<AvatarVariantMapVariant> StaleVariants = new List<AvatarVariantMapVariant>();
+            public AvatarVariantMap Map;
+        }
+
+        private sealed class BatchPlan
+        {
+            public readonly GameObject avatarRoot;
+            public readonly string parameterName;
+            public readonly string menuName;
+            public readonly int defaultValue;
+            public readonly ReleaseStatus releaseStatus;
+            public readonly string outputMapPath;
+            public readonly string uploadedAvatarNamePrefix;
+            public readonly List<BatchVariantPlan> variants;
+
+            private BatchPlan(
+                GameObject avatarRoot,
+                string parameterName,
+                string menuName,
+                int defaultValue,
+                ReleaseStatus releaseStatus,
+                string outputMapPath,
+                string uploadedAvatarNamePrefix,
+                List<BatchVariantPlan> variants)
+            {
+                this.avatarRoot = avatarRoot;
+                this.parameterName = parameterName;
+                this.menuName = menuName;
+                this.defaultValue = defaultValue;
+                this.releaseStatus = releaseStatus;
+                this.outputMapPath = outputMapPath;
+                this.uploadedAvatarNamePrefix = uploadedAvatarNamePrefix;
+                this.variants = variants;
+            }
+
+            public static BatchPlan Snapshot(AvatarVariantSwitchConfig cfg)
+            {
+                var variants = new List<BatchVariantPlan>();
+                foreach (var variant in cfg.variants)
+                {
+                    variants.Add(new BatchVariantPlan(
+                        variant.displayName ?? string.Empty,
+                        variant.variantKey ?? string.Empty,
+                        variant.paramValue,
+                        ResolveThumbnailPath(variant.thumbnail, GetVariantLabel(variant, variants.Count)),
+                        variant.uploadedName ?? string.Empty,
+                        variant.uploadedDescription ?? string.Empty,
+                        new List<GameObject>(variant.includedRoots ?? new List<GameObject>())));
+                }
+
+                return new BatchPlan(
+                    cfg.AvatarRoot,
+                    (cfg.parameterName ?? string.Empty).Trim(),
+                    ResolveMenuName(cfg),
+                    cfg.defaultValue,
+                    cfg.releaseStatus,
+                    cfg.outputMapPath,
+                    cfg.uploadedAvatarNamePrefix ?? string.Empty,
+                    variants);
+            }
+        }
+
+        private sealed class BatchVariantPlan
+        {
+            public readonly string displayName;
+            public readonly string variantKey;
+            public readonly int paramValue;
+            public readonly string thumbnailPath;
+            public readonly string uploadedName;
+            public readonly string uploadedDescription;
+            public readonly List<GameObject> includedRoots;
+
+            public BatchVariantPlan(
+                string displayName,
+                string variantKey,
+                int paramValue,
+                string thumbnailPath,
+                string uploadedName,
+                string uploadedDescription,
+                List<GameObject> includedRoots)
+            {
+                this.displayName = displayName;
+                this.variantKey = variantKey;
+                this.paramValue = paramValue;
+                this.thumbnailPath = thumbnailPath;
+                this.uploadedName = uploadedName;
+                this.uploadedDescription = uploadedDescription;
+                this.includedRoots = includedRoots;
+            }
+        }
     }
 }

@@ -3,5 +3,12 @@
   "displayName": "Lanstard Avatar Variant Switcher",
   "version": "0.1.0",
   "unity": "2022.3",
-  "description": "Local VRChat avatar variant switcher package with menu generation, batch upload, mapping export, and OSC bridge helpers."
+  "description": "Batch-upload VRChat avatar variants (different outfit / accessory combinations of the same avatar) and OSC-switch between them at runtime.",
+  "author": {
+    "name": "lanstard"
+  },
+  "vpmDependencies": {
+    "com.vrchat.avatars": ">=3.9.0",
+    "nadena.dev.modular-avatar": ">=1.10.0"
+  }
 }

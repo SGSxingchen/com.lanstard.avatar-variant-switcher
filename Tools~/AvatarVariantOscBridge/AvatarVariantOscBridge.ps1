@@ -223,7 +223,7 @@ try {
         }
 
         $lastObservedValue = $value
-        $entry = $mapping.entries | Where-Object { $_.value -eq $value } | Select-Object -First 1
+        $entry = $mapping.variants | Where-Object { $_.paramValue -eq $value } | Select-Object -First 1
 
         if ($null -eq $entry) {
             Write-Host "No avatar mapped for value $value."
@@ -243,7 +243,7 @@ try {
         $packet = New-OscMessage -Address "/avatar/change" -StringValue $entry.blueprintId
         [void]$sender.Send($packet, $packet.Length, $targetEndpoint)
         $currentAvatarId = $entry.blueprintId
-        Write-Host "Switched avatar for value $value -> $($entry.name) ($($entry.blueprintId))"
+        Write-Host "Switched avatar for value $value -> $($entry.displayName) ($($entry.blueprintId))"
     }
 }
 finally {
