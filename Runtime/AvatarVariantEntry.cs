@@ -25,6 +25,8 @@ namespace Lanstard.AvatarVariantSwitcher
 
         public List<GameObject> includedRoots = new List<GameObject>();
 
+        public List<AvatarVariantAccessory> accessories = new List<AvatarVariantAccessory>();
+
         [HideInInspector]
         [FormerlySerializedAs("uploadedBlueprintId")]
         public string legacyUploadedBlueprintId = string.Empty;

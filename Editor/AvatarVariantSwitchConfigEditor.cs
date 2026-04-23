@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
@@ -31,6 +32,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             new FieldLabel("uploadedName",       "上传名称 (可选)","留空则自动拼接；填了就用这个作为 VRChat 上该 blueprint 的名字。"),
             new FieldLabel("uploadedDescription","上传描述 (可选)","显示在 avatar 页面的描述文本。"),
             new FieldLabel("includedRoots",      "在这里拖入这个装扮包含的衣服/配件",  "本装扮上传时要保留的衣服、配件根物体（会被设为 Untagged 进入打包）。\n其他装扮的衣服会被本插件设为 EditorOnly 从这次包里排除——不是从场景里删除，只是这一轮上传不带它。\n主体（Body / Hair / 面部 / 骨骼等）【不要】拖进来，不放就对了，插件完全不碰它们，它们会跟随每一次上传。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
+            new FieldLabel("accessories",        "这个装扮的配件菜单（可选）",      "给这套装扮生成一组 Toggle 菜单项（帽子 / 眼镜 / 项链…）。每项：\n • target: 要开关的 GameObject（通常是 includedRoots 里物体的子物体）。\n • displayName: 菜单按钮文本；留空则用 target 的名字。\n • icon: 可选图标。\n • defaultOn: 打开此装扮时默认开还是关。\n不配就不生成。点下方「扫一层子物体自动填配件」自动从 includedRoots 的直接子物体里挑。"),
         };
 
         private ReorderableList _variantsList;
@@ -196,6 +198,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             element.FindPropertyRelative("uploadedName").stringValue = string.Empty;
             element.FindPropertyRelative("uploadedDescription").stringValue = string.Empty;
             element.FindPropertyRelative("includedRoots").arraySize = 0;
+            var accProp = element.FindPropertyRelative("accessories");
+            if (accProp != null) accProp.arraySize = 0;
 
             serializedObject.ApplyModifiedProperties();
         }
@@ -211,17 +215,20 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return next;
         }
 
+        private const float ScanButtonHeight = 22f;
+
         private float GetElementHeight(int index)
         {
             var element = _variantsProperty.GetArrayElementAtIndex(index);
             var spacing = EditorGUIUtility.standardVerticalSpacing;
-            var total = spacing * (EntryFields.Length + 1);
+            var total = spacing * (EntryFields.Length + 2);
             foreach (var field in EntryFields)
             {
                 var prop = element.FindPropertyRelative(field.Name);
                 if (prop == null) continue;
                 total += EditorGUI.GetPropertyHeight(prop, true);
             }
+            total += ScanButtonHeight;
             return total + 8f;
         }
 
@@ -237,6 +244,61 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 var fieldRect = new Rect(rect.x, rect.y, rect.width, height);
                 EditorGUI.PropertyField(fieldRect, prop, new GUIContent(field.Label, field.Tooltip), true);
                 rect.y += height + EditorGUIUtility.standardVerticalSpacing;
+            }
+
+            // 扫描按钮：从当前 entry 的 includedRoots 的直接子物体自动追加到 accessories（不覆盖已有）
+            var scanRect = new Rect(rect.x, rect.y, rect.width, ScanButtonHeight);
+            if (GUI.Button(scanRect, "扫一层子物体自动填配件"))
+            {
+                ScanAccessoriesForEntry(index);
+            }
+            rect.y += ScanButtonHeight + EditorGUIUtility.standardVerticalSpacing;
+        }
+
+        private void ScanAccessoriesForEntry(int entryIndex)
+        {
+            var config = (AvatarVariantSwitchConfig)target;
+            if (config == null || config.variants == null) return;
+            if (entryIndex < 0 || entryIndex >= config.variants.Count) return;
+
+            var entry = config.variants[entryIndex];
+            if (entry == null || entry.includedRoots == null) return;
+
+            entry.accessories ??= new List<AvatarVariantAccessory>();
+            var existingTargets = new HashSet<GameObject>();
+            foreach (var acc in entry.accessories)
+            {
+                if (acc != null && acc.target != null) existingTargets.Add(acc.target);
+            }
+
+            var added = 0;
+            foreach (var root in entry.includedRoots)
+            {
+                if (root == null) continue;
+                for (int ci = 0; ci < root.transform.childCount; ci++)
+                {
+                    var child = root.transform.GetChild(ci).gameObject;
+                    if (child == null) continue;
+                    if (existingTargets.Contains(child)) continue;
+                    entry.accessories.Add(new AvatarVariantAccessory
+                    {
+                        target = child,
+                        displayName = child.name,
+                        defaultOn = true
+                    });
+                    existingTargets.Add(child);
+                    added++;
+                }
+            }
+
+            if (added > 0)
+            {
+                EditorUtility.SetDirty(config);
+                serializedObject.Update();
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Avatar 装扮切换器", "没有发现新的子物体可以加入配件列表。", "确定");
             }
         }
 

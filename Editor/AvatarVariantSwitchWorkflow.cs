@@ -270,6 +270,35 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     controlledRoots.Add(root);
                 }
 
+                if (variant.accessories != null)
+                {
+                    var seenTargets = new HashSet<GameObject>();
+                    for (int ai = 0; ai < variant.accessories.Count; ai++)
+                    {
+                        var acc = variant.accessories[ai];
+                        if (acc == null) continue;
+                        if (acc.target == null)
+                        {
+                            report.Errors.Add(string.Format("装扮 {0} 的第 {1} 个配件 target 未指定。", label, ai + 1));
+                            continue;
+                        }
+                        if (!acc.target.transform.IsChildOf(avatarRoot.transform))
+                        {
+                            report.Errors.Add(string.Format("装扮 {0} 的配件 {1} 不属于当前 Avatar Root。", label, acc.target.name));
+                            continue;
+                        }
+                        if (IsUnderMenuRoot(acc.target, cfg))
+                        {
+                            report.Errors.Add(string.Format("装扮 {0} 的配件不能指向 _AvatarSwitcherMenu 里的对象：{1}。", label, acc.target.name));
+                            continue;
+                        }
+                        if (!seenTargets.Add(acc.target))
+                        {
+                            report.Errors.Add(string.Format("装扮 {0} 的配件列表里 {1} 出现了多次。", label, acc.target.name));
+                        }
+                    }
+                }
+
                 if (requireThumbnails)
                 {
                     try
@@ -327,6 +356,17 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     .Distinct()
                     .ToList();
 
+                // 把生成的所有配件 toggle GameObject 也纳入受控集：
+                // 每轮只保留当前装扮对应的 accessory 菜单项，其他装扮的配件菜单项本轮都 EditorOnly。
+                var accessoryMenuGameObjects = AvatarVariantMenuBuilder
+                    .EnumerateAllAccessoryMenuGameObjects(cfg)
+                    .Where(go => go != null)
+                    .ToList();
+                foreach (var accGo in accessoryMenuGameObjects)
+                {
+                    if (!controlledRoots.Contains(accGo)) controlledRoots.Add(accGo);
+                }
+
                 guard = AvatarVariantTagGuard.Capture(pm, controlledRoots);
 
                 var builder = await AvatarVariantBuilderGate.AcquireAsync(cts.Token);
@@ -348,6 +388,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     cts.Token.ThrowIfCancellationRequested();
 
                     var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
+                    foreach (var accGo in AvatarVariantMenuBuilder.EnumerateAccessoryMenuGameObjectsFor(cfg, variant.variantKey))
+                    {
+                        if (accGo != null) activeSet.Add(accGo);
+                    }
                     guard.ApplyActive(activeSet);
 
                     guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
