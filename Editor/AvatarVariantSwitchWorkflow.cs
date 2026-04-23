@@ -467,7 +467,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     }
                     catch (Exception ex)
                     {
-                        var shortMsg = TruncateForDialog(ex.Message);
+                        var shortMsg = ClassifyErrorForUser(ex);
                         progressWindow.MarkFailure(index, shortMsg);
                         return new FailureRecord(index, variant.displayName, shortMsg);
                     }
@@ -1052,6 +1052,55 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return s.Substring(0, limit) + "…";
         }
 
+        // 根据异常链里的关键字给出比 "An error occurred while sending the request"
+        // 更能落到用户身上的错误描述。VRChat 的上传分两条线：业务 API 走
+        // api.vrchat.cloud（Cloudflare），文件实体走 s3.us-east-1.amazonaws.com。
+        // 国内用户最常踩的坑是代理/梯子只分流了 VRChat 的域名、没把 AWS 加进去，
+        // 导致 S3 那条 TLS 握手直接被掐。
+        private static string ClassifyErrorForUser(Exception ex)
+        {
+            if (ex == null) return string.Empty;
+
+            var full = ex.ToString() ?? string.Empty;
+            var raw = ex.Message ?? string.Empty;
+
+            var hitS3 = full.IndexOf("amazonaws.com", StringComparison.OrdinalIgnoreCase) >= 0
+                        || full.IndexOf("failed to upload Signature", StringComparison.OrdinalIgnoreCase) >= 0
+                        || full.IndexOf("New image url is empty", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            var hitTls = full.IndexOf("SecureChannelFailure", StringComparison.OrdinalIgnoreCase) >= 0
+                         || full.IndexOf("transport stream", StringComparison.OrdinalIgnoreCase) >= 0
+                         || full.IndexOf("schannel", StringComparison.OrdinalIgnoreCase) >= 0
+                         || full.IndexOf("handshake", StringComparison.OrdinalIgnoreCase) >= 0
+                         || full.IndexOf("SSL", StringComparison.Ordinal) >= 0;
+
+            if (hitS3 && hitTls)
+            {
+                return "【网络】连 AWS S3（us-east-1）的 TLS 握手失败——代理/梯子大概率没把 *.amazonaws.com 加进分流。原始错误：" + TruncateForDialog(raw);
+            }
+            if (hitS3)
+            {
+                return "【网络】连 AWS S3 出错——代理/梯子检查一下 *.amazonaws.com 的分流规则。原始错误：" + TruncateForDialog(raw);
+            }
+            if (hitTls)
+            {
+                return "【网络】TLS 握手失败——代理/梯子或系统网络问题。原始错误：" + TruncateForDialog(raw);
+            }
+            return TruncateForDialog(raw);
+        }
+
+        // 任何一个失败记录的文案里带了 "【网络】" 标记，就说明至少有一条是 S3/TLS 问题。
+        private static bool AnyLooksLikeNetworkFailure(IList<FailureRecord> failures)
+        {
+            if (failures == null) return false;
+            foreach (var f in failures)
+            {
+                var msg = f.ErrorMessage ?? string.Empty;
+                if (msg.IndexOf("【网络】", StringComparison.Ordinal) >= 0) return true;
+            }
+            return false;
+        }
+
         private static string FormatFailureDialogMessage(IList<FailureRecord> failures)
         {
             var sb = new System.Text.StringBuilder();
@@ -1067,6 +1116,16 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 sb.AppendLine();
             }
             sb.AppendLine();
+
+            if (AnyLooksLikeNetworkFailure(failures))
+            {
+                sb.AppendLine("排查建议（90% 以上失败是这个）：");
+                sb.AppendLine("· VRChat 上传分两条线：业务走 api.vrchat.cloud，文件走 s3.us-east-1.amazonaws.com。");
+                sb.AppendLine("· 代理/梯子的分流规则一般只包含 VRChat 域名，不包含 AWS——检查把 *.amazonaws.com 也加进去。");
+                sb.AppendLine("· 或换个代理节点（美东/日本通常对 S3 美东更稳），再点重试。");
+                sb.AppendLine();
+            }
+
             sb.Append("是否重试这 ").Append(failures.Count).Append(" 个？已成功的装扮不会再次上传。");
             return sb.ToString();
         }
