@@ -53,11 +53,14 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 var menuItem = Undo.AddComponent<ModularAvatarMenuItem>(item);
                 menuItem.label = variant.displayName;
                 menuItem.automaticValue = false;
+                menuItem.isSynced = true;
+                menuItem.isSaved = true;
+                menuItem.isDefault = variant.paramValue == cfg.defaultValue;
                 menuItem.Control = new VRCExpressionsMenu.Control
                 {
                     name = variant.displayName,
                     icon = variant.menuIcon,
-                    type = VRCExpressionsMenu.Control.ControlType.Button,
+                    type = VRCExpressionsMenu.Control.ControlType.Toggle,
                     parameter = new VRCExpressionsMenu.Control.Parameter
                     {
                         name = cfg.parameterName.Trim()
@@ -158,7 +161,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     nameOrPrefix = cfg.parameterName.Trim(),
                     syncType = ParameterSyncType.Int,
                     localOnly = false,
-                    saved = true,
+                    // 主 AvatarVariant 参数不走 saved——每件 blueprint 烤进各自的 defaultValue，
+                    // 加载即落到该 variant 的值，和 blueprintId 自洽；saved=true 会让 VRChat
+                    // 把菜单中间态值跨 variant 持久化，触发加载后被弹走（详见 spec）。
+                    saved = false,
                     hasExplicitDefaultValue = true,
                     defaultValue = cfg.defaultValue
                 }

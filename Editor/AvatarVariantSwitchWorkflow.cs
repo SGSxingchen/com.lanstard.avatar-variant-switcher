@@ -337,6 +337,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             _busy = true;
             using var cts = new CancellationTokenSource();
             AvatarVariantTagGuard guard = null;
+            AvatarVariantParamDefaultGuard paramDefaultGuard = null;
             AvatarVariantUploadProgressWindow progressWindow = null;
             EditorApplication.LockReloadAssemblies();
 
@@ -395,6 +396,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 }
 
                 guard = AvatarVariantTagGuard.Capture(pm, controlledRoots, includedRootsUnion);
+                paramDefaultGuard = AvatarVariantParamDefaultGuard.Capture(cfg);
 
                 var builder = await AvatarVariantBuilderGate.AcquireAsync(cts.Token);
                 builder.SelectAvatar(plan.avatarRoot);
@@ -424,6 +426,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         activeSet.Add(accessoriesMenuRoot.gameObject);
                     }
                     guard.ApplyActive(activeSet);
+                    paramDefaultGuard.SetDefault(variant.paramValue);
 
                     guard.SetBlueprintId(ResolveExistingBlueprintId(map, variant.variantKey, variant.paramValue, variant.legacyUploadedBlueprintId));
 
@@ -561,6 +564,18 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     if (guard != null)
                     {
                         guard.Dispose();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                try
+                {
+                    if (paramDefaultGuard != null)
+                    {
+                        paramDefaultGuard.Dispose();
                     }
                 }
                 catch (Exception ex)

@@ -72,6 +72,26 @@ public sealed class BridgeRegressionTests : IDisposable
         Assert.Null(GetFieldValue<string>(bridge, "_currentAvatarId"));
     }
 
+    [Fact]
+    public void DebugFlag_is_parsed_from_cli_aliases()
+    {
+        foreach (var alias in new[] { "--debug", "-v", "--verbose" })
+        {
+            var mapPath = WriteTempMapFile();
+            var options = ParseOptions(new[] { "--map", mapPath, alias });
+            Assert.True(GetPropertyValue<bool>(options!, "Debug"), $"alias '{alias}' should enable Debug");
+            Assert.False(GetPropertyValue<bool>(options!, "Legacy"));
+        }
+    }
+
+    [Fact]
+    public void DebugFlag_defaults_off()
+    {
+        var mapPath = WriteTempMapFile();
+        var options = ParseOptions(new[] { "--map", mapPath });
+        Assert.False(GetPropertyValue<bool>(options!, "Debug"));
+    }
+
     public void Dispose()
     {
         foreach (var bridge in _bridges)
@@ -104,17 +124,21 @@ public sealed class BridgeRegressionTests : IDisposable
             ? new[] { "--legacy", "--map", mapPath }
             : new[] { "--map", mapPath };
 
-        var optionsType = GetTypeOrThrow("AvatarVariantOscBridge.BridgeOptions");
-        var options = optionsType
-            .GetMethod("Parse", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object[] { args });
-
+        var options = ParseOptions(args);
         Assert.NotNull(options);
 
         var bridgeType = GetTypeOrThrow("AvatarVariantOscBridge.VariantBridge");
         var bridge = Activator.CreateInstance(bridgeType, options!)!;
         _bridges.Add(bridge);
         return bridge;
+    }
+
+    private static object? ParseOptions(string[] args)
+    {
+        var optionsType = GetTypeOrThrow("AvatarVariantOscBridge.BridgeOptions");
+        return optionsType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { args });
     }
 
     private string WriteTempMapFile()
@@ -265,6 +289,11 @@ public sealed class BridgeRegressionTests : IDisposable
         => (T?)instance.GetType()
             .GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
             .GetValue(instance);
+
+    private static T GetPropertyValue<T>(object instance, string name)
+        => (T)instance.GetType()
+            .GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+            .GetValue(instance)!;
 
     private static ushort GetDnsConstant(string name)
         => (ushort)GetTypeOrThrow("AvatarVariantOscBridge.DnsCodec")

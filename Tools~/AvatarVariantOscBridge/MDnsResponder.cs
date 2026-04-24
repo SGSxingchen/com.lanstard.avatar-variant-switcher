@@ -41,6 +41,7 @@ internal sealed class MDnsResponder : IDisposable
     public event Action<DiscoveredService>? ServiceDiscovered;
     public event Action<string>? LogInfo;
     public event Action<string>? LogWarn;
+    public event Action<string>? LogDebug;
 
     private readonly List<MDnsServiceAdvertisement> _advertisements = new();
     private readonly HashSet<string> _browseTypes = new(StringComparer.OrdinalIgnoreCase);
@@ -151,7 +152,13 @@ internal sealed class MDnsResponder : IDisposable
                 Buffer.BlockCopy(buffer, 0, packetBytes, 0, length);
 
                 if (!DnsPacket.TryParse(packetBytes, out var packet) || packet == null)
+                {
+                    LogDebug?.Invoke($"rx {length}B from {result.RemoteEndPoint}: parse failed");
                     continue;
+                }
+
+                if (LogDebug != null)
+                    LogDebug.Invoke($"rx from {result.RemoteEndPoint}: {SummarizePacket(packet)}");
 
                 HandlePacket(packet);
             }
@@ -390,14 +397,12 @@ internal sealed class MDnsResponder : IDisposable
         var interfaces = _multicastInterfaces;
         if (interfaces.Count == 0)
         {
-            // No enumerated NICs (shouldn't happen after Start()); let the OS pick.
             try { socket.SendTo(bytes, SocketFlags.None, MulticastEndpoint); }
             catch (Exception ex) { LogWarn?.Invoke($"mDNS send error: {ex.Message}"); }
+            LogDebug?.Invoke($"tx via OS-default: {SummarizePacket(pkt)}");
             return;
         }
 
-        // Outgoing interface is a socket-level knob, so serialize the send to avoid
-        // one thread's SetSocketOption racing another thread's SendTo.
         lock (_sendLock)
         {
             foreach (var ifaddr in interfaces)
@@ -407,6 +412,7 @@ internal sealed class MDnsResponder : IDisposable
                     socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface,
                         ifaddr.GetAddressBytes());
                     socket.SendTo(bytes, SocketFlags.None, MulticastEndpoint);
+                    LogDebug?.Invoke($"tx via {ifaddr}: {SummarizePacket(pkt)}");
                 }
                 catch (Exception ex)
                 {
@@ -448,6 +454,49 @@ internal sealed class MDnsResponder : IDisposable
         var dot = instanceName.IndexOf('.');
         return dot < 0 ? string.Empty : instanceName.Substring(dot + 1);
     }
+
+    private static string SummarizePacket(DnsPacket pkt)
+    {
+        var kind = pkt.IsResponse ? "resp" : "query";
+        var sb = new System.Text.StringBuilder();
+        sb.Append(kind);
+        sb.Append(' ');
+        sb.Append($"Q={pkt.Questions.Count} A={pkt.Answers.Count} N={pkt.Authorities.Count} Ad={pkt.Additionals.Count}");
+        AppendHighlights(sb, "Q", pkt.Questions.Select(q => $"{TypeName(q.Type)}:{q.Name}"));
+        AppendHighlights(sb, "A", pkt.Answers.Select(SummarizeRecord));
+        AppendHighlights(sb, "Ad", pkt.Additionals.Select(SummarizeRecord));
+        return sb.ToString();
+    }
+
+    private static void AppendHighlights(System.Text.StringBuilder sb, string label, IEnumerable<string> items)
+    {
+        var list = items.Where(s => !string.IsNullOrEmpty(s)).Take(4).ToList();
+        if (list.Count == 0) return;
+        sb.Append(' ');
+        sb.Append(label);
+        sb.Append("=[");
+        sb.Append(string.Join("; ", list));
+        sb.Append(']');
+    }
+
+    private static string SummarizeRecord(DnsRecord r) => r.Type switch
+    {
+        DnsCodec.TypePtr => $"PTR {r.Name} -> {r.PtrName}",
+        DnsCodec.TypeSrv => $"SRV {r.Name} -> {r.Srv?.Target}:{r.Srv?.Port}",
+        DnsCodec.TypeA => $"A {r.Name} -> {r.Address}",
+        DnsCodec.TypeTxt => $"TXT {r.Name}",
+        _ => $"type{r.Type} {r.Name}",
+    };
+
+    private static string TypeName(ushort t) => t switch
+    {
+        DnsCodec.TypePtr => "PTR",
+        DnsCodec.TypeSrv => "SRV",
+        DnsCodec.TypeA => "A",
+        DnsCodec.TypeTxt => "TXT",
+        DnsCodec.TypeAny => "ANY",
+        _ => $"type{t}",
+    };
 
     public void Dispose()
     {
