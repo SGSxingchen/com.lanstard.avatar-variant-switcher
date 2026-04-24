@@ -126,12 +126,21 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     };
 
                     var toggle = Undo.AddComponent<ModularAvatarObjectToggle>(go);
+                    // MA Reactive 规则语义：条件命中 → target 写成 Active；不命中 → 回落到
+                    // bake 时 target.activeSelf（由 MA 读成 initial）。用户搭模时习惯让配饰
+                    // 在 scene 里 active=true 方便预览，若我们再写 Active=true，开/关都是 1，
+                    // toggle 看着没反应。根据 scene 当前的 activeSelf 反着设 Inverted/Active：
+                    //   scene=true  → Inverted=true,  Active=false（不命中时保留 scene 可见态）
+                    //   scene=false → Inverted=false, Active=true  （命中时覆盖为可见）
+                    // 两种写法的最终效果都是「菜单开=可见、菜单关=隐藏」。
+                    var sceneActive = acc.target.activeSelf;
+                    toggle.Inverted = sceneActive;
                     toggle.Objects = new List<ToggledObject>
                     {
                         new ToggledObject
                         {
                             Object = BuildAvatarReference(cfg.AvatarRoot, acc.target),
-                            Active = true
+                            Active = !sceneActive
                         }
                     };
                 }
