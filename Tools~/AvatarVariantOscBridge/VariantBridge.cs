@@ -52,6 +52,8 @@ internal sealed class VariantBridge
             _oscQuery.LogInfo += msg => Console.WriteLine($"[{Timestamp()}] {msg}");
             _oscQuery.LogWarn += msg => Console.Error.WriteLine($"[{Timestamp()}] WARN: {msg}");
             _oscQuery.VrchatDiscovered += ep => Console.WriteLine($"[{Timestamp()}] sending /avatar/change to {ep}");
+            if (options.Debug)
+                _oscQuery.LogDebug += msg => Console.WriteLine($"[{Timestamp()}] DEBUG {msg}");
             _oscQuery.Start();
         }
 
@@ -269,6 +271,8 @@ internal sealed class VariantBridge
             var id = string.IsNullOrWhiteSpace(v.BlueprintId) ? "(not uploaded)" : v.BlueprintId;
             Console.WriteLine($"  {v.ParamValue,3} | {v.DisplayName,-24} | {id}");
         }
+        if (_options.Debug)
+            Console.WriteLine("Debug:      on (every mDNS packet will be logged)");
         Console.WriteLine("Press Ctrl+C to stop.");
         Console.WriteLine();
     }

@@ -7,6 +7,7 @@ internal sealed class BridgeOptions
     public int ListenPort { get; private set; } = 9001;
     public int SendPort { get; private set; } = 9000;
     public bool Legacy { get; private set; }
+    public bool Debug { get; private set; }
 
     // Track explicit flag usage so we can warn when legacy-only flags are passed
     // without --legacy (they'd otherwise be silently ignored in OSCQuery mode).
@@ -42,6 +43,11 @@ internal sealed class BridgeOptions
                     break;
                 case "--legacy":
                     opts.Legacy = true;
+                    break;
+                case "--debug":
+                case "-v":
+                case "--verbose":
+                    opts.Debug = true;
                     break;
                 case "-h":
                 case "--help":
@@ -137,5 +143,6 @@ internal sealed class BridgeOptions
         Console.WriteLine("Default mode uses OSCQuery (mDNS auto-discovery, dynamic UDP port).");
         Console.WriteLine("--legacy pins UDP 9001 listen / 9000 send — use only if VRChat's OSCQuery is disabled");
         Console.WriteLine("or you need to interop with a legacy OSC router.");
+        Console.WriteLine("--debug (-v/--verbose) logs every mDNS rx/tx packet to diagnose discovery failures.");
     }
 }

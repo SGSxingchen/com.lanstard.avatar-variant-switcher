@@ -32,6 +32,7 @@ internal sealed class OscQueryService : IDisposable
     public event Action<IPEndPoint>? VrchatDiscovered;
     public event Action<string>? LogInfo;
     public event Action<string>? LogWarn;
+    public event Action<string>? LogDebug;
 
     private readonly string _oscInstanceFqdn;
     private readonly string _oscQueryInstanceFqdn;
@@ -69,6 +70,7 @@ internal sealed class OscQueryService : IDisposable
 
         _mdns.LogInfo += s => LogInfo?.Invoke(s);
         _mdns.LogWarn += s => LogWarn?.Invoke(s);
+        _mdns.LogDebug += s => LogDebug?.Invoke(s);
 
         _mdns.RegisterService(new MDnsServiceAdvertisement
         {
