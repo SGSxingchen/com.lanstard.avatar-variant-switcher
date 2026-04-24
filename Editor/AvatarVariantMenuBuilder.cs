@@ -53,11 +53,14 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 var menuItem = Undo.AddComponent<ModularAvatarMenuItem>(item);
                 menuItem.label = variant.displayName;
                 menuItem.automaticValue = false;
+                menuItem.isSynced = true;
+                menuItem.isSaved = true;
+                menuItem.isDefault = variant.paramValue == cfg.defaultValue;
                 menuItem.Control = new VRCExpressionsMenu.Control
                 {
                     name = variant.displayName,
                     icon = variant.menuIcon,
-                    type = VRCExpressionsMenu.Control.ControlType.Button,
+                    type = VRCExpressionsMenu.Control.ControlType.Toggle,
                     parameter = new VRCExpressionsMenu.Control.Parameter
                     {
                         name = cfg.parameterName.Trim()
