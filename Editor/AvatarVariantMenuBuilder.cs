@@ -107,12 +107,17 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     Undo.RegisterCreatedObjectUndo(go, "Create accessory menu item");
                     go.transform.SetParent(accRoot, false);
 
+                    // target 当前的 activeSelf 既决定菜单的默认开关（参数默认值 + MA menu item
+                    // 的 isDefault），也决定我们下面给 ObjectToggle 拼的 Inverted/Active——三
+                    // 者由同一个 scene 状态派生，用户想调就去 scene 里改配饰的 active。
+                    var sceneActive = acc.target.activeSelf;
+
                     var mi = Undo.AddComponent<ModularAvatarMenuItem>(go);
                     mi.label = label;
                     mi.automaticValue = false;
                     mi.isSynced = true;
                     mi.isSaved = true;
-                    mi.isDefault = acc.defaultOn;
+                    mi.isDefault = sceneActive;
                     mi.Control = new VRCExpressionsMenu.Control
                     {
                         name = label,
@@ -127,13 +132,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
                     var toggle = Undo.AddComponent<ModularAvatarObjectToggle>(go);
                     // MA Reactive 规则语义：条件命中 → target 写成 Active；不命中 → 回落到
-                    // bake 时 target.activeSelf（由 MA 读成 initial）。用户搭模时习惯让配饰
-                    // 在 scene 里 active=true 方便预览，若我们再写 Active=true，开/关都是 1，
-                    // toggle 看着没反应。根据 scene 当前的 activeSelf 反着设 Inverted/Active：
-                    //   scene=true  → Inverted=true,  Active=false（不命中时保留 scene 可见态）
+                    // bake 时 target.activeSelf（由 MA 读成 initial）。按 sceneActive 反着拼：
+                    //   scene=true  → Inverted=true,  Active=false（不命中保留 scene 的可见态）
                     //   scene=false → Inverted=false, Active=true  （命中时覆盖为可见）
                     // 两种写法的最终效果都是「菜单开=可见、菜单关=隐藏」。
-                    var sceneActive = acc.target.activeSelf;
                     toggle.Inverted = sceneActive;
                     toggle.Objects = new List<ToggledObject>
                     {
@@ -177,7 +179,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         localOnly = false,
                         saved = true,
                         hasExplicitDefaultValue = true,
-                        defaultValue = acc.defaultOn ? 1f : 0f
+                        defaultValue = acc.target.activeSelf ? 1f : 0f
                     });
                 }
             }

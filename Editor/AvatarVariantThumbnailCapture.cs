@@ -146,7 +146,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         break;
                     }
 
-                    sceneDirty |= ApplyVisibility(controlled, BuildShowSet(variant));
+                    sceneDirty |= ApplyVisibility(controlled, BuildShowSet(variant, activeSnapshot));
 
                     camera.targetTexture = rt;
                     camera.Render();
@@ -266,7 +266,11 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return result;
         }
 
-        private static HashSet<GameObject> BuildShowSet(AvatarVariantEntry variant)
+        // 用缩略图开拍前的 activeSelf 快照决定某个 accessory 要不要进缩略图——和 MenuBuilder
+        // 里「菜单默认状态也取 target.activeSelf」保持一致：用户在 scene 勾了的配饰进缩略图，
+        // 没勾的不进。快照是必要的，因为我们会在循环里逐 variant 动 activeSelf，直接读 live
+        // 值会受上一轮渲染残留影响。
+        private static HashSet<GameObject> BuildShowSet(AvatarVariantEntry variant, Dictionary<GameObject, bool> originalActiveSelf)
         {
             var set = new HashSet<GameObject>();
             if (variant == null) return set;
@@ -284,7 +288,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 foreach (var acc in variant.accessories)
                 {
                     if (acc == null || acc.target == null) continue;
-                    if (!acc.defaultOn) continue;
+                    if (!originalActiveSelf.TryGetValue(acc.target, out var wasActive) || !wasActive) continue;
                     set.Add(acc.target);
                 }
             }

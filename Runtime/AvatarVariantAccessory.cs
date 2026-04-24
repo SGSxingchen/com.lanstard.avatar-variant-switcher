@@ -9,6 +9,5 @@ namespace Lanstard.AvatarVariantSwitcher
         public GameObject target;
         public string displayName = string.Empty;
         public Texture2D icon;
-        public bool defaultOn = true;
     }
 }

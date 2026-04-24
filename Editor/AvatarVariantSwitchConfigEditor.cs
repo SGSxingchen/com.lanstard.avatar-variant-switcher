@@ -34,7 +34,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             new FieldLabel("uploadedName",       "上传名称 (可选)","留空则自动拼接；填了就用这个作为 VRChat 上该 blueprint 的名字。"),
             new FieldLabel("uploadedDescription","上传描述 (可选)","显示在 avatar 页面的描述文本。"),
             new FieldLabel("includedRoots",      "在这里拖入这个装扮包含的衣服/配件",  "本装扮上传时要保留的衣服、配件根物体（会被设为 Untagged 进入打包）。\n其他装扮的衣服会被本插件设为 EditorOnly 从这次包里排除——不是从场景里删除，只是这一轮上传不带它。\n主体（Body / Hair / 面部 / 骨骼等）【不要】拖进来，不放就对了，插件完全不碰它们，它们会跟随每一次上传。\n也不要放 _AvatarSwitcherMenu 或它的子物体。"),
-            new FieldLabel("accessories",        "这个装扮的配件菜单（可选）",      "给这套装扮生成一组 Toggle 菜单项（帽子 / 眼镜 / 项链…）。每项：\n • target: 要开关的 GameObject（通常是 includedRoots 里物体的子物体）。\n • displayName: 菜单按钮文本；留空则用 target 的名字。\n • icon: 可选图标。\n • defaultOn: 打开此装扮时默认开还是关。\n\n拖一个新的 root 到 includedRoots 后，它的直接子物体会被自动追加进来（首次一次性扫描）。不想要的手动删掉，删掉后不会再自动加回。如果后来你在场景里给某个 root 加了新的子物体，点下面的「强制重扫」手动拾取。"),
+            new FieldLabel("accessories",        "这个装扮的配件菜单（可选）",      "给这套装扮生成一组 Toggle 菜单项（帽子 / 眼镜 / 项链…）。每项：\n • target: 要开关的 GameObject（通常是 includedRoots 里物体的子物体）。\n • displayName: 菜单按钮文本；留空则用 target 的名字。\n • icon: 可选图标。\n\n菜单默认是开是关、缩略图里露不露这件配饰，都按 target 在场景里的 active 状态决定——想默认关就在场景里把它关掉再生成菜单。\n\n拖一个新的 root 到 includedRoots 后，它的直接子物体会被自动追加进来（首次一次性扫描）。不想要的手动删掉，删掉后不会再自动加回。如果后来你在场景里给某个 root 加了新的子物体，点下面的「强制重扫」手动拾取。"),
         };
 
         private ReorderableList _variantsList;
@@ -377,8 +377,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         entry.accessories.Add(new AvatarVariantAccessory
                         {
                             target = child,
-                            displayName = child.name,
-                            defaultOn = true
+                            displayName = child.name
                         });
                         existingTargets.Add(child);
                         changed = true;
@@ -568,8 +567,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     entry.accessories.Add(new AvatarVariantAccessory
                     {
                         target = child,
-                        displayName = child.name,
-                        defaultOn = true
+                        displayName = child.name
                     });
                     existingTargets.Add(child);
                     added++;
@@ -624,8 +622,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     entry.accessories.Add(new AvatarVariantAccessory
                     {
                         target = child,
-                        displayName = child.name,
-                        defaultOn = true
+                        displayName = child.name
                     });
                     existingTargets.Add(child);
                     added++;
