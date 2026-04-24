@@ -106,14 +106,9 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     AvatarVariantSwitchWorkflow.GenerateMenu(config);
                 }
 
-                if (GUILayout.Button("批量上传所有装扮"))
+                if (GUILayout.Button("批量上传..."))
                 {
-                    var allIndices = new List<int>();
-                    for (var i = 0; i < (config.variants != null ? config.variants.Count : 0); i++)
-                    {
-                        allIndices.Add(i);
-                    }
-                    AvatarVariantSwitchWorkflow.StartBatchUpload(config, allIndices);
+                    StartBatchUploadFlow(config);
                 }
 
                 if (GUILayout.Button("写入映射文件"))
@@ -134,6 +129,26 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         System.IO.Path.GetFullPath(config.outputMapPath));
                 }
             }
+        }
+
+        private static void StartBatchUploadFlow(AvatarVariantSwitchConfig config)
+        {
+            // Validate 内部会 requireThumbnails=true 覆盖全部 variants——即使用户本次只想
+            // 上传一件，其他 variants 仍在 tag guard 和 menu builder 的作用范围内，必须全部合法。
+            if (!AvatarVariantSwitchWorkflow.Validate(config, true, out var error))
+            {
+                EditorUtility.DisplayDialog("Avatar 装扮切换器", error, "确定");
+                return;
+            }
+
+            AvatarVariantUploadSelectWindow.Prompt(config, selectedIndices =>
+            {
+                if (selectedIndices == null || selectedIndices.Count == 0)
+                {
+                    return;
+                }
+                AvatarVariantSwitchWorkflow.StartBatchUpload(config, selectedIndices);
+            });
         }
 
         private void DrawVariantDropZone(AvatarVariantSwitchConfig config)
