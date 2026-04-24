@@ -108,7 +108,12 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
                 if (GUILayout.Button("批量上传所有装扮"))
                 {
-                    AvatarVariantSwitchWorkflow.StartBatchUpload(config);
+                    var allIndices = new List<int>();
+                    for (var i = 0; i < (config.variants != null ? config.variants.Count : 0); i++)
+                    {
+                        allIndices.Add(i);
+                    }
+                    AvatarVariantSwitchWorkflow.StartBatchUpload(config, allIndices);
                 }
 
                 if (GUILayout.Button("写入映射文件"))

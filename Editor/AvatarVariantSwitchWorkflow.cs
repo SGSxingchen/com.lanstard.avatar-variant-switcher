@@ -74,7 +74,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             }
         }
 
-        public static async void StartBatchUpload(AvatarVariantSwitchConfig cfg)
+        public static async void StartBatchUpload(AvatarVariantSwitchConfig cfg, IList<int> selectedIndices)
         {
             if (_busy)
             {
@@ -88,9 +88,18 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 return;
             }
 
+            // selectedIndices 的 defensive check——非法调用（null/空/越界/重复）直接弹对话框，
+            // 不让 RunBatchUploadAsync 在 EditorApplication.LockReloadAssemblies 之后才踩雷。
+            var validatedSelection = ValidateSelectedIndices(cfg, selectedIndices, out var selectionError);
+            if (validatedSelection == null)
+            {
+                EditorUtility.DisplayDialog(DialogTitle, selectionError, "确定");
+                return;
+            }
+
             try
             {
-                await RunBatchUploadAsync(cfg);
+                await RunBatchUploadAsync(cfg, validatedSelection);
             }
             catch (OperationCanceledException)
             {
@@ -101,6 +110,38 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 Debug.LogException(ex);
                 EditorUtility.DisplayDialog(DialogTitle, "批量上传失败：" + ex.Message, "确定");
             }
+        }
+
+        private static HashSet<int> ValidateSelectedIndices(
+            AvatarVariantSwitchConfig cfg,
+            IList<int> selectedIndices,
+            out string error)
+        {
+            if (selectedIndices == null || selectedIndices.Count == 0)
+            {
+                error = "未选择任何装扮。";
+                return null;
+            }
+
+            var count = cfg.variants != null ? cfg.variants.Count : 0;
+            var set = new HashSet<int>();
+            foreach (var idx in selectedIndices)
+            {
+                if (idx < 0 || idx >= count)
+                {
+                    error = string.Format("选中装扮索引越界：{0}（合法范围 0..{1}）。", idx, count - 1);
+                    return null;
+                }
+                if (cfg.variants[idx] == null)
+                {
+                    error = string.Format("选中装扮索引 {0} 对应的条目为空。", idx);
+                    return null;
+                }
+                set.Add(idx);
+            }
+
+            error = null;
+            return set;
         }
 
         public static void PruneStaleMapKeys(AvatarVariantSwitchConfig cfg)
@@ -332,7 +373,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             return report;
         }
 
-        private static async Task RunBatchUploadAsync(AvatarVariantSwitchConfig cfg)
+        private static async Task RunBatchUploadAsync(AvatarVariantSwitchConfig cfg, HashSet<int> selectedIndices)
         {
             _busy = true;
             using var cts = new CancellationTokenSource();
@@ -342,12 +383,23 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
 
             try
             {
-                var plan = BatchPlan.Snapshot(cfg);
+                var plan = BatchPlan.Snapshot(cfg, selectedIndices);
                 AvatarVariantMenuBuilder.Generate(cfg);
 
-                var planItems = new List<AvatarVariantUploadProgressWindow.VariantPlanItem>();
-                foreach (var v in plan.variants)
+                // global→progress 索引映射：progress window 内部用 _rows[progressIdx] 连续数组，
+                // 但 pendingIndices / FailureRecord.OriginalIndex 以及 variant 数据都以 cfg.variants
+                // 全局索引为准。在每次调 MarkBegin / MarkSuccess / MarkFailure / PrepareRetry 时做转换。
+                var selectedSorted = plan.selectedIndices.OrderBy(g => g).ToList();
+                var globalToProgress = new Dictionary<int, int>(selectedSorted.Count);
+                for (var pi = 0; pi < selectedSorted.Count; pi++)
                 {
+                    globalToProgress[selectedSorted[pi]] = pi;
+                }
+
+                var planItems = new List<AvatarVariantUploadProgressWindow.VariantPlanItem>();
+                foreach (var globalIdx in selectedSorted)
+                {
+                    var v = plan.variants[globalIdx];
                     planItems.Add(new AvatarVariantUploadProgressWindow.VariantPlanItem(
                         v.displayName, v.variantKey, v.thumbnailAsset));
                 }
@@ -405,7 +457,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 async Task<FailureRecord?> TryUploadOneVariantAsync(int index)
                 {
                     var variant = plan.variants[index];
-                    progressWindow.MarkBegin(index);
+                    progressWindow.MarkBegin(globalToProgress[index]);
 
                     var activeSet = new HashSet<GameObject>(variant.includedRoots.Where(root => root != null));
                     var hasActiveAccessoryMenuItems = false;
@@ -459,7 +511,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     catch (Exception ex)
                     {
                         var shortMsg = ClassifyErrorForUser(ex);
-                        progressWindow.MarkFailure(index, shortMsg);
+                        progressWindow.MarkFailure(globalToProgress[index], shortMsg);
                         return new FailureRecord(index, variant.displayName, shortMsg);
                     }
 
@@ -474,7 +526,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                         map.Upsert(variant.variantKey, variant.paramValue, variant.displayName, blueprintId);
                         AvatarVariantMap.WriteAtomic(plan.outputMapPath, map);
 
-                        progressWindow.MarkSuccess(index, blueprintId);
+                        progressWindow.MarkSuccess(globalToProgress[index], blueprintId);
                         return null;
                     }
                     catch (OperationCanceledException)
@@ -483,12 +535,13 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     }
                     catch (Exception ex)
                     {
-                        progressWindow.MarkFailure(index, ClassifyErrorForUser(ex));
+                        progressWindow.MarkFailure(globalToProgress[index], ClassifyErrorForUser(ex));
                         throw;
                     }
                 }
 
-                var pendingIndices = Enumerable.Range(0, plan.variants.Count).ToList();
+                // selectedSorted 已是按升序的全局索引，直接用它当初始 pending 列表。
+                var pendingIndices = new List<int>(selectedSorted);
                 var lastFailures = new List<FailureRecord>();
 
                 while (true)
@@ -529,7 +582,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     }
 
                     pendingIndices = passFailures.Select(f => f.OriginalIndex).ToList();
-                    progressWindow.PrepareRetry(pendingIndices);
+                    progressWindow.PrepareRetry(pendingIndices.Select(g => globalToProgress[g]).ToList());
                 }
 
                 if (lastFailures.Count == 0)
@@ -541,7 +594,7 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 {
                     progressWindow.EndSessionFailed(string.Format(
                         "部分失败：{0}/{1} 个装扮未能上传；成功的已写入映射，稍后可重新点批量上传继续处理失败装扮。",
-                        lastFailures.Count, plan.variants.Count));
+                        lastFailures.Count, plan.selectedIndices.Count));
                 }
             }
             catch (OperationCanceledException)
@@ -1243,7 +1296,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
             public readonly string outputMapPath;
             public readonly string uploadedAvatarNamePrefix;
             public readonly string legacyUploadedAvatarDescription;
+            // 全量快照：cfg.variants 的所有条目都进这里，受控集合 / tag 翻转 / 菜单生成都基于它。
             public readonly List<BatchVariantPlan> variants;
+            // 本次上传的子集：cfg.variants 的全局索引，只有这些 index 会被轮到跑 BuildAndUpload。
+            public readonly HashSet<int> selectedIndices;
 
             private BatchPlan(
                 GameObject avatarRoot,
@@ -1254,7 +1310,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 string outputMapPath,
                 string uploadedAvatarNamePrefix,
                 string legacyUploadedAvatarDescription,
-                List<BatchVariantPlan> variants)
+                List<BatchVariantPlan> variants,
+                HashSet<int> selectedIndices)
             {
                 this.avatarRoot = avatarRoot;
                 this.parameterName = parameterName;
@@ -1265,9 +1322,10 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                 this.uploadedAvatarNamePrefix = uploadedAvatarNamePrefix;
                 this.legacyUploadedAvatarDescription = legacyUploadedAvatarDescription;
                 this.variants = variants;
+                this.selectedIndices = selectedIndices;
             }
 
-            public static BatchPlan Snapshot(AvatarVariantSwitchConfig cfg)
+            public static BatchPlan Snapshot(AvatarVariantSwitchConfig cfg, HashSet<int> selectedIndices)
             {
                 var variants = new List<BatchVariantPlan>();
                 foreach (var variant in cfg.variants)
@@ -1294,7 +1352,8 @@ namespace Lanstard.AvatarVariantSwitcher.Editor
                     cfg.outputMapPath,
                     cfg.uploadedAvatarNamePrefix ?? string.Empty,
                     cfg.legacyUploadedAvatarDescription ?? string.Empty,
-                    variants);
+                    variants,
+                    new HashSet<int>(selectedIndices));
             }
         }
 
